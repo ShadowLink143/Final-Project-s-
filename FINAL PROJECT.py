@@ -13,6 +13,7 @@ GRAVITY = 0.8
 WALK_SPEED = 4
 RUN_SPEED = 8  
 JUMP_FORCE = -16
+RUN_JUMP_FORCE = -20
 
 class Player:
     def __init__(self):
@@ -106,9 +107,10 @@ class Player:
         else:
         
             self.image = pygame.transform.flip(self.idle_frame, True, False)
-    def jump(self):
+    def jump(self, is_running=False):
         if not self.is_jumping:
-            self.vel_y = JUMP_FORCE
+            force = RUN_JUMP_FORCE if is_running else JUMP_FORCE
+            self.vel_y = force
             self.is_jumping = True
 class Camera:
     def __init__(self, width, height):
@@ -179,6 +181,7 @@ def main():
 
     tiles = setup_level(LEVEL_MAP)
     while True:
+        keys = pygame.key.get_pressed()
         for event in pygame.event.get():
             if event.type == pygame.QUIT: return
 
@@ -197,12 +200,22 @@ def main():
                 print(f"Controller disconnected: {removed_id if removed_id is not None else event.device_index}")
             # --- JUMP LOGIC (Initial Press) ---
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_z: Kris.jump()
+                if event.key == pygame.K_z: 
+                    is_running = keys[pygame.K_x]
+                    Kris.jump(is_running)
             
             if event.type == pygame.JOYBUTTONDOWN:
                 
                 if event.button == 0 or event.button == 1: 
-                    Kris.jump()
+                    is_running = False
+                    for joy in joysticks:
+                        try:
+                            if joy.get_button(2) or joy.get_button(3):
+                                is_running = True
+                                break
+                        except pygame.error:
+                            continue
+                    Kris.jump(is_running)
 
 
 
