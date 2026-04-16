@@ -1,6 +1,6 @@
 import pygame
 import math
-#for now, z is jump, x is run, and shift is dash
+#for now, z is jump, x is run, and shift is dash. to wall jump, be in air, press the other direction, and jump. (oh and I temporarily lowered gravity to test wall jumping)
 #and for joystick, A/B is jump, X/Y is run, and shoulder buttons are dash
 
 pygame.joystick.init()
