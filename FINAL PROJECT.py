@@ -35,21 +35,42 @@ class DialogueBox:
         self.autoplay = autoplay  # If True, auto-advance to next sentence
         self.auto_delay = auto_delay  # Frames to wait before auto-advancing
         self.auto_timer = 0  # Timer for autoplay
-
+        self.wait_timer = 0
     def update(self, keys, skip_held=False):
         # Skip entire dialogue if button held (useful for dev testing)
+        keys = pygame.key.get_pressed()
         if skip_held:
             self.finished = True
             return
         
         if self.current_sentence < len(self.text_list):
             target_text = self.text_list[self.current_sentence]
+
+            if self.wait_timer > 0:
+                self.wait_timer -= 1
+                return
+            
             if self.char_index < len(target_text):
                 self.timer += 1
                 if self.timer >= self.speed:
-                    self.current_text += target_text[self.char_index]
-                    self.char_index += 1
-                    self.timer = 0
+                    char = target_text[self.char_index]
+                    if char == "|":  # PAUSE TAG
+                        self.wait_timer = 30  # Wait for 30 frames
+                        self.char_index += 1  # Skip the symbol
+                    elif char == ">": # WARP 
+                        # Add everything left in the sentence instantly
+                        remaining_text = target_text[self.char_index + 1:]
+                        self.current_text += remaining_text
+                        self.char_index = len(target_text)
+                    elif pygame.KEYUP in keys and (keys[pygame.K_z] or keys[pygame.K_RETURN] or keys[pygame.K_SPACE]):
+                        # If player releases advance button, skip to end of sentence
+                        self.current_text = target_text
+                        self.char_index = len(target_text)
+                    else:
+                        self.current_text += char
+                        self.char_index += 1
+                    
+
             else:
                 # Text is fully typed
                 if self.autoplay:
@@ -70,7 +91,7 @@ class DialogueBox:
         self.char_index = 0
         self.timer = 0
         self.auto_timer = 0
-
+        self.wait_timer = 0
     def draw(self, screen, x, y):
         lines = self.current_text.split('\n')
         line_height = self.font.get_linesize()
@@ -127,8 +148,9 @@ class Player:
         
         # Get initial image from idle animation
         self.image = self.animations['idle'][0]
-        self.rect = self.image.get_rect(topleft=(100, 2300))
-        
+        self.rect = self.image.get_rect(topleft=(100, 2300)) 
+        self.hitbox = self.rect.inflate(-10, 0) 
+        self.rect = self.hitbox.copy()
         # State tracking
         self.facing_right = True
         
@@ -413,7 +435,7 @@ class Player:
         elif keys[pygame.K_RIGHT]:
             input_x = 1
         # Add controller input here if needed
-        
+              
         if not self.is_jumping:
             # Normal jump from ground
             force = RUN_JUMP_FORCE if is_running else JUMP_FORCE
@@ -422,7 +444,7 @@ class Player:
             self.air_control_timer = 20
         elif self.on_wall and self.wall_jump_cooldown == 0:
             # Wall jump: require pressing direction away from wall
-            if (self.on_wall == 'right' and input_x == -1) or (self.on_wall == 'left' and input_x == 1):
+            if (input_x == -1) or (input_x == 1):
                 force = RUN_JUMP_FORCE if is_running else JUMP_FORCE
                 self.vel_y = force
                 self.is_jumping = True
@@ -632,11 +654,11 @@ def setup_level(layout, moon_spike_images=None):
             elif cell == 'N':
                 # level 1 NPC 
                 lines = [
-                    "Moistar: Help! Help! I don't know what to do!",
-                    "Mo found this weird paper. He calls himself 'DJ Oser' now.",
-                    "He thinks he's doing everyone a favor by blasting music.",
-                    "Truth is, he's actually annoying. And loud.",
-                    "He's up ahead. Please help.",
+                    "Moistar: Help! Help!",
+                    "So there I was, enjoying my donut,| and then a sound wave zipped by \nand knocked it out of my hand!| \nCurse you, Mo....",
+                    "He found this weird paper.| He calls himself 'DJ Oser' now.\nThinks he's doing everyone a favor by blasting music.",
+                    "But all he's doing is just causing desert-related incidents.",
+                    "He's up ahead.| MaKE hIm PaaYyyYy....",
                     "Captain Vio: Yeah, yeah, I know. Let's get this over with."
                 ]
                 npcs.append(NPC(x, y, "Moistar", lines))
