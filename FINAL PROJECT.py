@@ -75,6 +75,9 @@ mois_snd = pygame.mixer.Sound('Mois_bytes.wav')
 snd_hurt = pygame.mixer.Sound('snd_hurt.wav')
 snd_speaker_explode =pygame.mixer.Sound('snd_speaker_explode.wav')
 snd_speaker_hurt =pygame.mixer.Sound('snd_speaker_hurt.wav')
+snd_hurt.set_volume(0.3)
+mois_snd.set_volume(0.3)
+
 class DialogueBox:
     def __init__(self, font, text_list, speaker_name="", autoplay=False, auto_delay=120, has_background=True, has_portrait=None, is_passive=False):
         self.is_passive = is_passive
@@ -228,14 +231,14 @@ class DialogueBox:
                         (icon_rect.left, icon_rect.top),
                         (icon_rect.right, icon_rect.top),
                         (icon_rect.centerx, icon_rect.bottom)
-                    ])
+                    ]) 
                 if self.has_portrait and self.speaker_name in PORTRAITS:
-                    port_rect = pygame.Rect(x + 519, y - 174, 158, 158)
+                    port_rect = pygame.Rect(x + 494, y - 189, 183, 173)
                     pygame.draw.rect(screen, (0, 0, 0), port_rect)
                     pygame.draw.rect(screen, (255, 255, 255), port_rect, 2)
                     
-                    portrait_img = pygame.transform.scale(PORTRAITS[self.speaker_name], (150, 150))
-                    screen.blit(portrait_img, (x + 523, y - 170))
+                    portrait_img = pygame.transform.scale(PORTRAITS[self.speaker_name], (200, 200))
+                    screen.blit(portrait_img, (x + 485, y - 220))
                     
                 # Main box background (optional, but looks good)
                 #main_bg = pygame.Rect(x - 20, y - 75, 150, 50)
@@ -1626,7 +1629,7 @@ def setup_level(layout, moon_spike_images=None):
                     "Alas!| There I stoodest, with utmost innocence, partaking in the most \nexquisite of doughy goodness-* a sweet, jelly-filled confection.\nBUT--|all good things must come to an end.*\nAs befittest of a tyrant, which he ISSETH|, Mo......", # and then a sound wave zipped by \nand knocked it out of my hand!| \nCurse you, Mo....",
                     "With his atrocious waves of sound, |didst strike with utmost strength.| \nTHUS--|was my delectable treat flewn into the bottomless cosmos.",  #He found this weird paper.| He calls himself 'DJ Oser' now.\nThinks he's doing everyone a favor by blasting music.",
                     "He's up ahead.* MaKE hIm PaaYyyYy....*\nBeWARrreee tHe SoouuNdd...|",
-                    "@Captain Vio: .|.|.|.|.|(Why did I talk to this guy again?)"
+                    "@Captain Vio: .|.|.|.|.|"
                 ]
                 npcs.append(NPC(x, y, "Moistar", lines))
 
@@ -2161,7 +2164,7 @@ def main():
 
         pygame.display.flip()
         clock.tick(60)
-        pygame.display.set_caption(f"X: {Vio.rect.x} Y: {Vio.rect.y}")
+        pygame.display.set_caption(f" X: {Vio.rect.x} Y: {Vio.rect.y}")
 LEVEL_MAP = [
     '........................................................................................................................................................................................................................................G..GG...G...G...G...G...G...G...G...G...G..G..G...G...G...G...G...GG...G...G...G..G...GG...',
     '.................................................................................................................................................................................................................................................................................................................................',
