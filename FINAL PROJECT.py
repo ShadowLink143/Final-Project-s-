@@ -2454,7 +2454,7 @@ def main():
                 mo_boss = DJOserBoss(15000 + WIDTH // 2 - TILE_SIZE, 780, mo_boss_img, font)
                 boss_manager = BossManager(mo_boss, boombox_img, shockwave_img, font)
                 boss_state = "INTRO"
-                s
+                
                 
                 if boss_first_entry:
                     active_dialogue = DialogueBox(
