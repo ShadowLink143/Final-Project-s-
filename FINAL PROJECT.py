@@ -21,11 +21,20 @@ RUN_JUMP_FORCE = -18
 DASH_SPEED = 18
 DASH_TIME = 15  
 DASH_COOLDOWN = 20
-
+canSkip = False
+active_dialogue=None
 boss_triggered = False
+boss_finished = False
 boss_manager = None  # Will be initialized when boss is triggered
 boss_state = None  # Can be "INTRO", "FIGHTING", "DAZED", "BONKED"
 boss_first_entry = True  # Track first entry vs re-entry to skip dialogue
+
+# Level state
+current_level = 1
+
+ship = None
+shadow = None
+moon_spike_images = None
 
 class Camera:
     def __init__(self, width, height):
@@ -40,8 +49,8 @@ class Camera:
         return entity_rect.move(-self.offset_x - self.shake_x, -self.offset_y - self.shake_y)
 
     def  update(self, target_rect):
-        global boss_triggered
-        if boss_triggered:
+        global boss_triggered, boss_finished
+        if boss_triggered and not boss_finished:
             # Lock the camera to the arena coordinates
             self.offset_x = 15000 
             
@@ -64,7 +73,8 @@ camera = Camera(WIDTH, HEIGHT)
 BOSS_ARENA1_START_X = (15000)
 
 PORTRAITS = {
-    "Captain Vio": pygame.image.load("Vio_Portrait_Face.png").convert_alpha(),
+    "Captain Vio": pygame.image.load("Vio_Portrait.png").convert_alpha(),
+    "Captain Vio_Down": pygame.image.load("Vio_Down.png").convert_alpha(),
     #"Moistar": pygame.image.load("moistar_portrait.png").convert_alpha(),
     #"DJ Oser": pygame.image.load("mo_portrait.png").convert_alpha(),
     #"???": pygame.image.load("unknown_portrait.png").convert_alpha()
@@ -75,8 +85,16 @@ mois_snd = pygame.mixer.Sound('Mois_bytes.wav')
 snd_hurt = pygame.mixer.Sound('snd_hurt.wav')
 snd_speaker_explode =pygame.mixer.Sound('snd_speaker_explode.wav')
 snd_speaker_hurt =pygame.mixer.Sound('snd_speaker_hurt.wav')
+glitch_snd = pygame.mixer.Sound('glitch_snd.wav')
+
 snd_hurt.set_volume(0.3)
 mois_snd.set_volume(0.3)
+
+
+moistar_charge_img=pygame.image.load("moistar_charge_img.png").convert_alpha()
+donut_img = pygame.image.load("Donut.png").convert_alpha()
+
+
 
 class DialogueBox:
     def __init__(self, font, text_list, speaker_name="", autoplay=False, auto_delay=120, has_background=True, has_portrait=None, is_passive=False):
@@ -84,6 +102,8 @@ class DialogueBox:
         self.font = font
         self.text_list = text_list
         self.speaker_name = speaker_name
+        self.current_portrait_key = speaker_name 
+        self.has_portrait = self.current_portrait_key in PORTRAITS
         self.has_background = has_background
         
         # If has_portrait is not specified, determine it based on whether speaker has a portrait
@@ -107,6 +127,7 @@ class DialogueBox:
         self.icon_timer = 0  
         self.z_pressed_last = False
 
+        self.process_current_line()
     def update(self, keys, skip_held=False):
         # Skip entire dialogue if button held (useful for dev testing)
         if keys is None:
@@ -144,7 +165,7 @@ class DialogueBox:
                         self.wait_timer = 30  # Wait for 30 frames
                         self.char_index += 1  # Skip the symbol
 
-                    elif char == "*": # NEW: WAIT FOR INPUT TAG
+                    elif char == "*": 
                         self.waiting_for_input = True
                         self.char_index += 1
 
@@ -161,7 +182,6 @@ class DialogueBox:
             
             
             if self.char_index >= len(target_text):
-            # Use your existing autoplay OR the new passive mode
                 if self.autoplay or self.is_passive:
                     self.auto_timer += 1
                     if self.auto_timer >= self.auto_delay:
@@ -173,14 +193,54 @@ class DialogueBox:
                 elif is_z_pressed and not self.z_pressed_last:
                     self.advance_sentence()
             
-            self.z_pressed_last = is_z_pressed
-            #if you're holding z, the text will proceed twice as fast:
-            if is_z_pressed:
-                self.timer += self.speed // 0.1  # Speed up text when holding Z
+            if getattr(self, 'trigger_glitch', False):
+                if not hasattr(self, 'glitch_timer'): 
+                    self.glitch_timer = 0
+                if self.glitch_timer > 15:
+                    self.current_sentence += 1
+                    self.glitch_timer = 0
+                    self.trigger_glitch = False 
+                self.glitch_timer += 1
 
-       
+            self.z_pressed_last = is_z_pressed
+            #if holding z, faster text speed:
+            if is_z_pressed:
+                self.timer += self.speed // 0.1  
+
+    def process_current_line(self):
+        #checks for certain tags at the start of a line
+        if self.current_sentence >= len(self.text_list):
+            return
+
+        line = self.text_list[self.current_sentence]
+
+        # 1. Handle @ Speaker and Portrait Tags
+        if line.startswith("@"):
+            parts = line[1:].split(":", 1)
+            if len(parts) > 1:
+                full_key = parts[0].strip()
+                # Set the actual text to be typed (removing the @ stuff)
+                self.text_list[self.current_sentence] = parts[1].strip()
+                line = self.text_list[self.current_sentence] # Update local line variable
+
+                # Set portrait and display name
+                self.current_portrait_key = full_key
+                self.speaker_name = full_key.split("_")[0]
+                self.has_portrait = self.current_portrait_key in PORTRAITS
+
+        #glitch Tag
+        if "~" in line:
+            self.trigger_glitch = True
+            # Clean the text so the ~ doesn't show up in the typewriter
+            self.text_list[self.current_sentence] = line.replace("~", "")
+            if not hasattr(self, 'glitch_snd_played'): # Optional: only play once
+                glitch_snd.play()
+        else:
+            self.trigger_glitch = False
+
     def advance_sentence(self):
         """reset variables for the next sentence."""
+        raw_text = "" 
         self.current_sentence += 1
         self.current_text = ""
         self.char_index = 0
@@ -189,16 +249,9 @@ class DialogueBox:
         self.wait_timer = 0
 
         if self.current_sentence < len(self.text_list):
-            next_line = self.text_list[self.current_sentence]
-            if next_line.startswith("@"):
-                parts = next_line[1:].split(":", 1)
-                if len(parts) > 1:
-                    self.speaker_name = parts[0]
-                    self.text_list[self.current_sentence] = parts[1]
-                    # Update portrait availability when speaker changes
-                    self.has_portrait = self.speaker_name in PORTRAITS
-        
-        if self.current_sentence >= len(self.text_list):
+            self.process_current_line()
+          
+        else:
             self.finished = True
         
     def draw(self, screen, x=0, y=0):
@@ -232,13 +285,13 @@ class DialogueBox:
                         (icon_rect.right, icon_rect.top),
                         (icon_rect.centerx, icon_rect.bottom)
                     ]) 
-                if self.has_portrait and self.speaker_name in PORTRAITS:
+                if self.has_portrait and self.current_portrait_key in PORTRAITS:
                     port_rect = pygame.Rect(x + 494, y - 189, 183, 173)
                     pygame.draw.rect(screen, (0, 0, 0), port_rect)
                     pygame.draw.rect(screen, (255, 255, 255), port_rect, 2)
                     
-                    portrait_img = pygame.transform.scale(PORTRAITS[self.speaker_name], (200, 200))
-                    screen.blit(portrait_img, (x + 485, y - 220))
+                    portrait_img = pygame.transform.scale(PORTRAITS[self.current_portrait_key], (230, 230))
+                    screen.blit(portrait_img, (x + 470, y - 250))
                     
                 # Main box background (optional, but looks good)
                 #main_bg = pygame.Rect(x - 20, y - 75, 150, 50)
@@ -311,11 +364,10 @@ class TrailParticle:
         self.lifetime -= 1
     
     def _create_silhouette(self, image):
-        """Create a dark silhouette/faded version of the image (Celeste-style)."""
         silhouette = image.copy()
         # Create a semi-transparent dark overlay that lets the original show through
         overlay = pygame.Surface(silhouette.get_size(), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))  # Dark overlay - mostly opaque but not full black
+        overlay.fill((0, 0, 0, 120))  
         silhouette.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         return silhouette
 
@@ -336,7 +388,7 @@ def create_star_image(size):
     base_color = (255, 240, 160)
     glow_color = (255, 235, 140)
     radius = max(1, size)
-    # draw small diamond shape and cross arms
+    
     pygame.draw.line(surf, glow_color, (center[0] - radius, center[1]), (center[0] + radius, center[1]), max(1, size))
     pygame.draw.line(surf, glow_color, (center[0], center[1] - radius), (center[0], center[1] + radius), max(1, size))
     pygame.draw.polygon(surf, base_color, [
@@ -404,17 +456,24 @@ class Star:
         rect = image.get_rect(center=(screen_x, screen_y))
         surface.blit(image, rect)
 
+
+default_pos = (17100, 624) #(switch commenting the one below for just testing the 1st boss)
+#default_pos = (100, 2724)
+# Get initial image from idle animation
+LEVEL_START_POINTS = {
+    1: default_pos,
+    2: (100, 2724)
+}
+
 class Player:
+    global default_pos
     def __init__(self, animations):
         self.animations = animations  # Dictionary of animation states to frame lists
         self.current_animation = 'idle'
         self.frame_index = 0
         self.frame_counter = 0
         self.animation_speed = 0.15  # How fast to cycle frames
-        #default_pos = (14000, 624) #(switch commenting the one below for just testing the 1st boss)
-        default_pos = (100, 2724)
-
-        # Get initial image from idle animation
+        
         self.image = self.animations['idle'][0]
         self.rect = self.image.get_rect(topleft=(default_pos)) 
         self.hitbox = self.rect.inflate(-10, 0) 
@@ -422,7 +481,9 @@ class Player:
         self.spawn_point = (default_pos)
         # State tracking
         self.facing_right = True
-        
+        self.is_walking = False
+
+        self.can_move = True
         self.vel_x = 0
         self.vel_y = 0
         self.is_jumping = False
@@ -448,7 +509,7 @@ class Player:
         
         # Position history for shadow delay
         self.position_history = []
-        self.history_length = 320  # 2 seconds at 60fps
+        self.history_length = 320  
         
         # Physics Constants
         self.ACCEL = 0.6     
@@ -457,7 +518,84 @@ class Player:
         self.MAX_RUN = 10     
         self.wall_cling_timer = 0
         self.WALL_CLING_DURATION = 20
-    def update(self, tiles, trail_particles=None):
+
+        self.cutscene_target_x = None
+        self.cutscene_speed = 3
+
+    def reset_for_level(self, spawn_point):
+        self.spawn_point = spawn_point
+        self.rect.topleft = spawn_point
+        self.hitbox = self.rect.inflate(-10, 0)
+        self.rect = self.hitbox.copy()
+        self.vel_x = 0
+        self.vel_y = 0
+        self.is_jumping = False
+        self.is_dashing = False
+        self.can_move = True
+        self.cutscene_target_x = None
+        self.on_wall = None
+        self.wall_jump_cooldown = 0
+        self.air_control_timer = 0
+
+    def update(self, tiles, trail_particles=None, cutscene_mode=False):
+        global canSkip 
+        if not self.can_move and self.cutscene_target_x is None:
+            self.vel_x = 0
+        self.is_walking = False  # Reset walking flag each frame
+        self.update_animation()
+        if self.cutscene_target_x is not None:
+            dist = self.cutscene_target_x - self.rect.centerx
+            if abs(dist) < self.cutscene_speed:
+                # Snap to exact center and stop
+                self.rect.centerx = self.cutscene_target_x
+                self.cutscene_target_x = None 
+                self.vel_x = 0
+                self.is_walking = False
+            else:
+                # Move toward target
+                direction = 1 if dist > 0 else -1
+                self.rect.x += direction * self.cutscene_speed
+                self.vel_x = 1.2 * direction
+                self.facing_right = (direction == 1)
+                self.is_walking = True
+            
+        if not self.can_move:
+            self.vel_x = 0
+            self.vel_y = 0
+            return
+            
+        self.vel_y += 0.6
+        self.rect.y += self.vel_y
+            
+        for tile in tiles:
+            if self.rect.colliderect(tile.rect):
+                if tile.type == 'moonspike' or tile.type == 'shockwave':
+                    self.take_damage(self.max_health)
+                if tile.type == 'platform':
+                    if self.vel_y > 0:
+                        self.rect.bottom = tile.rect.top
+                        self.vel_y = 0
+                        self.is_jumping = False
+                        self.dash_spent = False
+                        self.dash_ready = True
+                elif tile.type == 'normal':
+                    if self.vel_y > 0: 
+                        self.rect.bottom = tile.rect.top
+                        self.vel_y = 0
+                        self.is_jumping = False
+                        self.dash_spent = False 
+                        self.dash_ready = True
+                    elif self.vel_y < 0: 
+                        self.rect.top = tile.rect.bottom
+                        self.vel_y = 0
+
+        if not self.can_move:
+            self.vel_x = 0
+            return
+        if self.cutscene_target_x is not None or cutscene_mode:
+            if self.cutscene_target_x is None:
+                self.vel_x = 0 
+            return 
         keys = pygame.key.get_pressed()
         controller_x = 0
         controller_y = 0
@@ -634,45 +772,14 @@ class Player:
         elif self.on_wall == 'left' and not wall_touch_left:
             self.on_wall = None
             self.wall_cling_timer = 0
-        if not self.is_dashing:
-            self.vel_y += GRAVITY
+       
+            
 
         # Wall sliding slows descent when clinging to a wall
         if self.on_wall and self.vel_y > 0 and not self.is_dashing:
             self.vel_y = min(self.vel_y, self.wall_slide_speed)
 
-        self.rect.y += self.vel_y
         
-        for tile in tiles:
-            if self.rect.colliderect(tile.rect):
-                # Moon spike kills on touch regardless of collision direction
-                if tile.type == 'moonspike' or tile.type == 'shockwave':
-                    self.take_damage(self.max_health)
-                # Platform tiles only block from TOP (vel_y > 0)
-                if tile.type == 'platform':
-                    if self.vel_y > 0:  # Falling onto platform
-                        self.rect.bottom = tile.rect.top
-                        self.vel_y = 0
-                        self.is_jumping = False
-                        self.dash_spent = False
-                        self.dash_ready = True
-                    # Platform lets you pass through from below/sides
-                # Wall tiles don't block vertical movement
-                elif tile.type == 'wall':
-                    # Walls allow pass-through from top/bottom
-                    continue
-                # Normal tiles block all directions
-                elif tile.type == 'normal':
-                    if self.vel_y > 0: 
-                        self.rect.bottom = tile.rect.top
-                        self.vel_y = 0
-                        self.is_jumping = False
-                        self.dash_spent = False 
-                        self.dash_ready = True
-                    elif self.vel_y < 0: 
-                        self.rect.top = tile.rect.bottom
-                        self.vel_y = 0
-                        self.on_wall = None
         
         # Record position for shadow delay
         self.position_history.append((self.rect.centerx, self.rect.centery))
@@ -680,13 +787,16 @@ class Player:
             self.position_history.pop(0)
         
         # Update animation based on current state
-        self.update_animation()
+        
 
     def update_animation(self):
-        """Update the current animation based on player state and cycle frames."""
+        """Update the current animation"""
+        #if hasattr(self, 'is_holding_violin') and self.is_holding_violin:
+            #new_animation = 'violin_pose' 
+    
         keys = pygame.key.get_pressed()
         # Determine which animation should play
-        if self.is_dashing:
+        if self.is_dashing and self.can_move:
             new_animation = 'dash'
         elif self.is_jumping: #if in air and are pressing against a wall, show climb
             pressing_into_left = (self.on_wall == 'left' and keys[pygame.K_LEFT])
@@ -696,9 +806,9 @@ class Player:
                 new_animation = 'climb'
             else:
                 new_animation = 'jump'
-        elif abs(self.vel_x) > self.MAX_WALK * 0.8:  # Running threshold
+        elif self.can_move and (abs(self.vel_x) > self.MAX_WALK * 0.8):  # Running threshold
             new_animation = 'run'
-        elif abs(self.vel_x) > 1.1:  # Walking threshold
+        elif self.can_move and (abs(self.vel_x) > 1.1 or self.is_walking):  # Walking threshold
             new_animation = 'walk'
         else:
             new_animation = 'idle'
@@ -958,12 +1068,12 @@ class BoomBox:
         orig_w, orig_h = image.get_size()
         self.image = pygame.transform.scale(image, (orig_w * 2, orig_h * 2))
         self.rect = self.image.get_rect()
-        
         self.rect = self.image.get_rect(topleft=(x, y))
-        
+        self.is_active = False
+
         # Button attributes
-        self.button_health = 3
-        self.button_max_health = 3
+        self.button_health = 1
+        self.button_max_health = 1
         self.button_x = x + (TILE_SIZE if side == "left" else TILE_SIZE)
         self.button_y = y + TILE_SIZE * 2
         self.button_radius = TILE_SIZE // 2
@@ -1156,12 +1266,10 @@ class Spike(Hazard):
         player.take_damage(self.damage)
 
 class DJOserBoss:
-    """The main boss character. Hovers in place and commands attack patterns."""
     def __init__(self, x, y, image, font):
         if image and image.get_width() > 0:
             self.image = image
         else:
-            # Fallback: create a visible boss sprite
             self.image = pygame.Surface((TILE_SIZE * 2, TILE_SIZE * 2))
             self.image.fill((255, 100, 255))  # Magenta for visibility
             pygame.draw.circle(self.image, (255, 255, 0), (TILE_SIZE, TILE_SIZE), TILE_SIZE)  # Yellow circle
@@ -1171,6 +1279,8 @@ class DJOserBoss:
         self.rect.y = self.base_y
         self.x = x
         self.y = y
+        self.vel_x = 0
+        self.vel_y = 0
         self.font = font
         self.frames = get_simple_frames("DJ Oser.png", 2, 64, 64, 4) # Adjust size
         self.anim_index = 0
@@ -1194,33 +1304,49 @@ class DJOserBoss:
         return self.hp <= 0
     
     def update(self, player_rect):
-        """Update boss hovering and attack timers."""
+        if hasattr(self, 'is_launched') and self.is_launched:
+            target_x = 20000 # Way off to the right
+            move_speed = 60  # Super fast!
+            self.rect.y -= 15 # Fly upward at an angle
+        else:
+            move_speed = 5
+        
+        if self.vel_x != 0:
+            self.rect.x += self.vel_x
+            self.rect.y += self.vel_y
+            self.vel_y += 1.5
+            return
+        if hasattr(self, 'is_dazed') and self.is_dazed:
+            self.rect.y = self.base_y + math.sin(self.timer) * 15 # Just hover gently
+            return
         self.timer += 0.05
         self.attack_timer += 1
             #Idle
-        if self.attack_timer < 300: # 5 seconds of peace
-            target_x = 15000 + 500 # Middle of 1200px arena
+        if self.attack_timer < 300: 
+            target_x = 15000 + 500 
             self.rect.y = self.base_y + math.sin(self.timer) * 15
             #Hunt
         elif 300 <= self.attack_timer < 420:
             target_x = player_rect.centerx
-            self.rect.y = self.base_y - 100 # Float higher to signal attack
+            self.rect.y = self.base_y - 100 
             #Slam
         elif 420 <= self.attack_timer < 450:
-            target_x = self.rect.centerx # Stay still on X while dropping
+            target_x = self.rect.centerx 
             self.rect.y += 25
             if self.rect.y >= 700:
                 self.rect.y = 700
                 self.hit_ground = True
-
         else:
             self.hit_ground = False
             target_x = 15000 + 600
             if self.rect.y > self.base_y: self.rect.y -= 5
             if self.attack_timer > 550: self.attack_timer = 0 # Reset cycle
 
-        if self.rect.centerx < target_x: self.rect.x += 5
-        elif self.rect.centerx > target_x: self.rect.x -= 5
+       
+        if self.rect.centerx < target_x: 
+            self.rect.x += move_speed
+        elif self.rect.centerx > target_x: 
+            self.rect.x -= move_speed
 
         if hasattr(self, 'chat_timer') and self.chat_timer > 0:
             self.chat_timer -= 1
@@ -1257,21 +1383,40 @@ class DJOserBoss:
             screen.blit(hp_text, (WIDTH - 250, 20))
 
 class BossManager:
+    global active_dialogue
     """Manages the entire boss fight, including BoomBoxes, waves, and state transitions."""
     def __init__(self, boss, boombox_image, shockwave_image, font):
-        
+        self.trail_particles = []
+
         self.boss = boss
         self.font = font
         self.state = "INTRO"  # INTRO -> FALLING_IN -> FIGHTING -> CLEANUP -> BONK
         self.timer = 0
         self.battle_dialogue = None
         self.said_hint_line = False
-        
 
+        self.moistar_x = 14000  # Start far off-screen to the left
+        self.moistar_y = 850
+        self.moistar_speed = 45 # Mach speed
+        self.moistar_img = moistar_charge_img
+        self.donut_img = donut_img
+        self.donut_y = -100
+        self.donut_visible = False
+        self.cleanup_phase = "RANT"
+        self.shake_duration = 0
+
+        self.sheet_img = pygame.image.load("Melody1.png").convert_alpha()
+        self.sheet_img = pygame.transform.scale(self.sheet_img, (48, 48)) 
+        self.sheet_x = self.boss.rect.centerx
+        self.sheet_y = -100
+        self.sheet_x = 15000 + 600
+        self.sheet_visible = False
+        self.vio_claiming_sheet = False
+        self.violin_started = False
+        self.memory_initialized = False
         # BoomBox management
         full_sheet = pygame.image.load("boomBox.png").convert_alpha()
         
-        # Check if the image is large enough for the subsurfaces
         sheet_width, sheet_height = full_sheet.get_size()
         if sheet_width >= 128 and sheet_height >= 128:
             left_img = full_sheet.subsurface(pygame.Rect(0, 0, 64, 128))
@@ -1297,6 +1442,7 @@ class BossManager:
         self.shake_intensity = 0
         
     def transition_to_falling(self):
+        
         self.state = "FALLING_IN"
         self.left_box.start_falling()
         self.right_box.start_falling()
@@ -1333,7 +1479,6 @@ class BossManager:
         #return all(box.button_health <= 0 for box in self.boomboxes)
     
     def spawn_vertical_rain(self):
-        # Width of the arena (1200px)
         start_x = 15100
         end_x = 16100
         gap_size = 200
@@ -1349,37 +1494,50 @@ class BossManager:
             v_wave.active = True
             #v_wave.max_speed = 12 
             self.vertical_waves.append(v_wave)
-    def update(self, player, keys):
-        # 1. Update Boss (Pass player to handle the Slam Attack!)
-        if self.state in ["FALLING_IN", "FIGHTING", "CLEANUP"]:
-            if self.state == "FIGHTING":
                 #if not hasattr(self, 'talked_once'):
                     #self.boss.say("Feel the might of DJ Oser!")
                     #self.talked_once = True
                 #if self.talked_once and not hasattr(self, 'talked_twice'):
                     #self.boss.say("Sure hope you don't dash into the glowing self-destruct buttons.")
                     #self.talked_twice = True
+    def update(self, player, keys):
+        global boss_finished
+        # Update active dialogue
+        if self.battle_dialogue:
+            self.battle_dialogue.update(keys)
+            if self.battle_dialogue.finished:
+                self.battle_dialogue = None
+        
+        # 1. Update Boss (Pass player to handle the Slam Attack!)
+        if self.state in ["FALLING_IN", "FIGHTING", "CLEANUP", "BONK_FINISHED", "FINISHED"]:
+            old_y = self.boss.rect.y
+            self.boss.update(player.rect)
+            new_y = self.boss.rect.y
+            for box in self.boomboxes:
+                box.is_active = True
+
+            if self.state == "FIGHTING":
+            
                 if not self.said_hint_line:
                     self.battle_dialogue = DialogueBox(
                         self.font, 
                         ["(Sure hope this guy doesn't dash into the \nglowing self-destruct buttons.)"], 
                         speaker_name="DJ Oser", 
                         autoplay=True, 
+                        has_background = False,
                         is_passive=True
                     )
                     self.said_hint_line = True
-                if self.battle_dialogue:
-                    self.battle_dialogue.update(keys)
-                    if self.battle_dialogue.finished:
-                        self.battle_dialogue = None
+                #if self.battle_dialogue:
+                    #self.battle_dialogue.update(keys)
+                    #if self.battle_dialogue.finished:
+                        #self.battle_dialogue = None
 
                         
-                old_y = self.boss.rect.y
-                self.boss.update(player.rect)
-                new_y = self.boss.rect.y
             # Trigger shake if Boss hits ground during slam
                 if old_y < 700 and new_y >= 700:
                     self.trigger_screen_shake(10, 15)
+                    
                     if random.random() > 0.5:
                         # Spawn the ground waves
                         l_wave = BouncingWave(self.boss.rect.centerx, 740, -1, 12, 15000, 16200, self.shockwave_image)
@@ -1431,21 +1589,177 @@ class BossManager:
         elif self.state == "FIGHTING":
             if all(box.button_health <= 0 for box in self.boomboxes):
                 self.state = "CLEANUP"
+                self.boss.is_dazed = True
                 self.timer = 0
 
         elif self.state == "CLEANUP":
             self.timer += 1
-            if self.timer > 120:
-                self.state = "BONK"
+            if self.cleanup_phase == "RANT":
+                player.can_move = False
+                if not hasattr(self, 'rant_started'):
+                    self.battle_dialogue = DialogueBox(self.font, 
+                        ["Not cool, man! You may have destroyed my speakers, \nbut the fight's just getting--"], 
+                        "DJ Oser", autoplay=True, auto_delay =40, is_passive=False)
+                    self.current_scene_text = self.battle_dialogue
+                    self.rant_started = True
+                if hasattr(self, 'rant_started') and self.current_scene_text.finished:
+                        self.cleanup_phase = "DONUT_FALL"
+                        self.donut_visible = True
+                        self.timer = 0
+            elif self.cleanup_phase == "DONUT_FALL":
+                if self.donut_y < self.boss.rect.top+100:
+                    self.donut_y += 8
+                    self.timer = 0 
+                else:
+                    # Donut is in hand!
+                    if self.timer > 60:
+                        if not hasattr(self, 'donut_dialogue_started'):
+                                self.battle_dialogue = DialogueBox(self.font, 
+                                    ["Huh? What the... a donut?"], 
+                                    "DJ Oser", autoplay=True, auto_delay = 40, is_passive=False)
+                                self.current_scene_text = self.battle_dialogue
+                                self.donut_dialogue_started = True
+                                self.timer = 0
+                        if hasattr(self, 'donut_dialogue_started') and self.current_scene_text.finished:
+                            if self.battle_dialogue is None:
+                                self.cleanup_phase = "SHOCK"
+                                self.timer = 0
+                        
 
-        # 5. Shake countdown
+            elif self.cleanup_phase == "SHOCK":
+                if not hasattr(self, 'shock_triggered'):
+                    # Trigger the "MY DONUT" dialogue
+                    self.battle_dialogue = DialogueBox(self.font, ["MY DONUT!!!!!!!!!!"], "Moistar", has_background=True, autoplay=True, is_passive=False)
+                    self.shock_triggered = True
+                if self.shock_triggered and self.battle_dialogue is None:
+                    self.cleanup_phase = "BONK"
+                    self.donut_visible = True
+
+            elif self.cleanup_phase == "BONK":
+                if self.moistar_x < self.boss.rect.centerx:
+                    self.moistar_x += self.moistar_speed
+                    self.trail_particles.append([self.moistar_x - 20, self.moistar_y + random.randint(-20, 20), random.randint(4, 8), 255])
+                
+                    
+                if self.moistar_x >= self.boss.rect.centerx:
+                    self.trigger_screen_shake(30, 40)
+                    self.boss.is_launched = True 
+                    self.boss.vel_x = 50 
+                    self.boss.vel_y = -30
+                    self.state = "BONK" 
+                    self.sheet_visible = True
+                if self.state == "BONK_FINISHED" and self.battle_dialogue is None:
+                    # Trigger the very last cutscene
+                    #self.battle_dialogue = DialogueBox(self.font, [
+                        #"@Moistar: Mo! You big dummy!| What were you thinking?!",
+                        #"Mo: ...|Moistar?| Is that you?",
+                    #], "Moistar")
+                    self.state ="FINISHED"
+                #if self.state == "FINISHED":
+                    
+                    #self.sheet_visible = True
+        if self.sheet_visible:
+            if self.sheet_y < 700:
+                self.sheet_y += 4
+                if not self.vio_claiming_sheet:
+                    self.sheet_x += math.sin(pygame.time.get_ticks() * 0.004) * 2
+            else:
+                
+                if player.cutscene_target_x is None and not self.vio_claiming_sheet:
+                    player.cutscene_target_x = 15000 + 600  
+                    self.vio_claiming_sheet = True
+                    player.cutscene_speed = 4.0
+        
+        if self.vio_claiming_sheet and player.cutscene_target_x is None:
+            if self.state != "VIOLIN_PERFORMANCE" and not self.violin_started:
+                self.state = "VIOLIN_PERFORMANCE"
+                self.violin_started = True
+                player.is_holding_violin = True
+                self.performance_timer = 0
+                # melody1_snd.play()
+            if self.state == "VIOLIN_PERFORMANCE":
+                self.performance_timer += 1
+                if not hasattr(self, 'memory_fade'):
+                    self.memory_fade = 0
+                if self.performance_timer > 120:
+                    self.memory_fade = min(255, self.memory_fade + 5)
+                if self.performance_timer > 280:
+                    self.state = "MEMORY_START"
+        if self.state == "MEMORY_START":
+            if self.memory_initialized == False:
+        
+                memory_text = [
+                    "(You see a girl boarding a train.)",
+                    "(A white door casts a looming presence...)",
+                    "(You raise your hand to open the door.|)",
+                    "~",
+                    " (|You...| stop thinking about it.)"
+        
+                ]
+                self.battle_dialogue = DialogueBox(self.font, memory_text, is_passive=False)
+                self.current_scene_text = self.battle_dialogue
+                self.memory_initialized = True
+                player.cutscene_target_x = None  # Stop any cutscene movement
+                # player.can_move = False  # Handled by cutscene_mode
+                return
+                #if self.battle_dialogue:
+                 #   if "~" in self.battle_dialogue.text_list[self.battle_dialogue.current_sentence]:
+                  #      self.is_glitching
+            # 2. Check if the memory dialogue is done to return to the arena
+            
+            if hasattr(self, 'current_scene_text') and self.current_scene_text and self.current_scene_text.finished and self.memory_initialized == True:
+                self.state = "MEMORY_END"
+                
+        elif self.state == "MEMORY_END":
+            if not hasattr(self, 'memory_fade'):
+                self.memory_fade = 0
+            if self.memory_fade > 0:
+                self.memory_fade = max(0, self.memory_fade - 5)
+            elif not getattr(self, 'post_battle_started', False):
+                self.state = "POST_BATTLE_THOUGHTS"
+                self.post_battle_started = True
+                player.cutscene_target_x = None  
+                player.vel_x = 0  
+                player.is_dashing = False  
+                player.is_jumping = False 
+                self.battle_dialogue = DialogueBox(self.font, [
+                    "@Captain Vio_Down:.....",
+                    "Why....*Why must it continue to haunt me?*\n"
+                    "...No. Just continue to the next one. I have to.| \n"
+                    "There's no other choice...|right?",
+                ], is_passive=False)
+                self.current_scene_text = self.battle_dialogue
+                # player.can_move = False  # Handled by cutscene_mode
+
+        elif self.state == "POST_BATTLE_THOUGHTS":
+            if self.battle_dialogue is None and not getattr(self, 'post_battle_finished', False):
+                self.state = "FINISHED"
+                boss_finished = True
+                self.post_battle_finished = True
+                player.can_move = True
+                player.cutscene_target_x = None  
+                player.vel_x = 0  
+                player.is_dashing = False  
+                player.is_jumping = False  
+                self.memory_fade = 0  # Reset fade to prevent black screen
+                #self.vio_claiming_sheet = False  # Reset to prevent retriggering
+                self.sheet_visible = False
+                player.is_holding_violin = False
+                
         self.shake_duration = max(0, self.shake_duration - 1)
-    
+        for p in self.trail_particles[:]:
+                p[0] -= 5      # Move particles left slightly
+                p[3] -= 15     # Fade out
+                if p[3] <= 0:
+                    self.trail_particles.remove(p)
+        print(f"Current State: {self.state} | Dialogue: {self.battle_dialogue}")
     def draw(self, screen, camera):
+        
         # Draw BoomBoxes (only if they have health)
         for box in self.boomboxes:
-            if box.button_health > 0:
-                box.draw(screen, camera)
+             if box.is_active:
+                if box.button_health > 0:
+                    box.draw(screen, camera)
         
         # Draw waves
         for wave in self.waves:
@@ -1454,9 +1768,23 @@ class BossManager:
                 v_wave.draw(screen, camera)
         # Draw boss
         self.boss.draw(screen, camera)
+        if self.donut_visible:
+            donut_rect = self.donut_img.get_rect(center=(self.boss.rect.centerx, self.donut_y))
+            screen.blit(self.donut_img, camera.apply(donut_rect))
 
-        if self.battle_dialogue:
-            self.battle_dialogue.draw(screen) 
+        if self.cleanup_phase == "BONK":
+            for p in self.trail_particles:
+                star_surf = pygame.Surface((p[2], p[2]))
+                star_surf.fill((255, 255, 200)) 
+                star_surf.set_alpha(p[3]) 
+                
+                pos = camera.apply(pygame.Rect(p[0], p[1], p[2], p[2]))
+                screen.blit(star_surf, pos)
+            ms_rect = self.moistar_img.get_rect(center=(self.moistar_x, self.moistar_y))
+            screen.blit(self.moistar_img, camera.apply(ms_rect)) 
+        if self.sheet_visible:
+            sheet_rect = self.sheet_img.get_rect(center=(self.sheet_x, self.sheet_y))
+            screen.blit(self.sheet_img, camera.apply(sheet_rect))
 
 class NPC:
     def __init__(self, x, y, name, dialogue_list):
@@ -1512,7 +1840,6 @@ class NPC:
             ])
 
     def draw(self, screen, camera):
-        # Placeholder for NPC: A bright yellow square
 
         npcs = ["Moistar", "DJ Oser", "???"]
         Moistar_image = get_image(pygame.image.load('Moistar.png').convert_alpha(), 0, 35, 35, SCALE)
@@ -1636,6 +1963,106 @@ def setup_level(layout, moon_spike_images=None):
     return tiles_list, checkpoints, decorations_list
 
 
+class Ship:
+    def __init__(self, x, y, image=None):
+        if image is None:
+            self.image = pygame.Surface((TILE_SIZE * 2, TILE_SIZE), pygame.SRCALPHA)
+            pygame.draw.polygon(
+                self.image,
+                (190, 220, 255),
+                [(0, TILE_SIZE), (TILE_SIZE * 2, TILE_SIZE), (TILE_SIZE * 1.5, TILE_SIZE // 2), (TILE_SIZE * 0.5, TILE_SIZE // 2)]
+            )
+        else:
+            self.image = image
+        self.rect = self.image.get_rect(center=(x, y))
+        self.active = False
+        self.taking_off = False
+        self.target_level = None
+        self.transition_fade = 0
+        self.takeoff_speed = 8
+        self.state = "IDLE"
+    def activate(self):
+        self.active = True
+        self.taking_off = False
+
+    def start_takeoff(self, next_level):
+        self.taking_off = True
+        self.target_level = next_level
+        self.active = True
+
+    def update(self):
+        if not self.active:
+            return False
+        if self.taking_off:
+            self.rect.y -= self.takeoff_speed
+            if self.rect.y < -200:
+                if not hasattr(self, 'transition_fade'):
+                    self.transition_fade = 0
+                self.transition_fade = min(255, self.transition_fade + 5)
+            if self.transition_fade >= 255:
+                self.state = "SHIP_MEMORY"
+                return True
+            #if self.rect.bottom < 0:
+                #self.active = False
+            
+    
+        return False
+
+    def draw(self, screen, camera):
+        if not self.active:
+            return
+        if hasattr(self, 'transition_fade') and self.transition_fade > 0:
+            fade_surf = pygame.Surface((WIDTH, HEIGHT))
+            fade_surf.fill((0, 0, 0))
+            fade_surf.set_alpha(self.transition_fade)
+            screen.blit(fade_surf, (0, 0))
+        screen.blit(self.image, camera.apply(self.rect))
+
+
+def load_level(level_number):
+    global current_level, LEVEL_MAP, tiles, checkpoints, decorations_list
+    global npcs, hazards, boss_triggered, boss_finished, boss_manager
+    global boss_state, boss_first_entry, active_dialogue, ship, shadow, camera
+    global moon_spike_images, Vio, LEVEL_START_POINTS
+
+    current_level = level_number
+    if level_number == 1:
+        LEVEL_MAP = LEVEL1_MAP
+    elif level_number == 2:
+        LEVEL_MAP = LEVEL2_MAP
+    else:
+        LEVEL_MAP = LEVEL1_MAP
+
+    npcs.clear()
+    if shadow is None:
+        shadow = Shadow((0, 0))
+    else:
+        shadow.reset(Vio)
+
+    hazards = [shadow]
+    boss_triggered = False
+    boss_finished = False
+    boss_manager = None
+    boss_state = None
+    boss_first_entry = True
+    active_dialogue = None
+
+    start_pos = LEVEL_START_POINTS.get(level_number, (100, 2724))
+    Vio.reset_for_level(start_pos)
+
+    level_width = max(len(row) for row in LEVEL_MAP) * TILE_SIZE
+    ship_x = min(level_width - TILE_SIZE * 2 - 50, 15000 + 2500)
+    ship_y = min(HEIGHT + 120, 760)
+    ship = Ship(ship_x, ship_y)
+
+    if camera is not None:
+        camera.offset_x = max(0, Vio.rect.centerx - WIDTH // 2)
+        camera.offset_y = max(0, Vio.rect.centery - HEIGHT * 0.65)
+
+    tiles, checkpoints, decorations_list = setup_level(LEVEL_MAP, moon_spike_images)
+    return tiles, checkpoints, decorations_list
+
+
 def draw_moon_spike(surface, rect, orientation='up'):
     color = (200, 200, 255)
     if orientation == 'up':
@@ -1659,16 +2086,16 @@ def load_spritesheet(filename, frame_w, frame_h, scale):
     """Load spritesheet and extract animation frames scaled to the given scale factor."""
     sheet = pygame.image.load(filename).convert_alpha()
     
-    
-    
+    walk_frames = extract_frames(sheet, 0, 3, 3, frame_w, frame_h, scale)
+
     animations = {
         "idle":  extract_frames(sheet, 0, 0, 3, frame_w, frame_h, scale),
-        "walk":  extract_frames(sheet, 0, 3, 3, frame_w, frame_h, scale),
         "jump":  extract_frames(sheet, 1, 0, 2, frame_w, frame_h, scale),
         "dash":  extract_frames(sheet, 1, 2, 2, frame_w, frame_h, scale),
         "climb": extract_frames(sheet, 1, 4, 2, frame_w, frame_h, scale),
         "run":   extract_frames(sheet, 2, 0, 6, frame_w, frame_h, scale)
     }
+    animations["walk"] = [walk_frames[0], walk_frames[1], walk_frames[2], walk_frames[1]]
     return animations
 
 def extract_frames(sheet, row, start_col, num_frames, w, h, scale):
@@ -1778,7 +2205,7 @@ def handle_player_death(player, hazards, tiles, camera, particles, trail_particl
         trail_particles.clear()
 
 def main():
-    global boss_triggered, boss_manager
+    global boss_triggered, boss_manager, Vio, shadow, ship, current_level, moon_spike_images, active_dialogue, hazards
     # World starfield for the background
     max_world_width = max(len(row) for row in LEVEL_MAP) * TILE_SIZE
     max_world_height = len(LEVEL_MAP) * TILE_SIZE
@@ -1799,14 +2226,42 @@ def main():
         animations = None
         return
     
-
+    
 
     Vio = Player(animations)
-    shadow = Shadow((Vio.rect.x - 250, Vio.rect.y))
-    hazards = [shadow, Spike((500, 520), damage=1)] 
     particles = []
     trail_particles = []
     
+    # Moon spike image loading and rotated variants
+    moon_spike_images = {}
+    try:
+        moon_spike_base = pygame.image.load('MoonSpike.png').convert_alpha()
+        moon_spike_base = pygame.transform.scale(moon_spike_base, (TILE_SIZE, TILE_SIZE))
+    except pygame.error:
+        moon_spike_base = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        pygame.draw.polygon(moon_spike_base, (200, 200, 255), [(0, TILE_SIZE), (TILE_SIZE * 0.25, TILE_SIZE * 0.4), (TILE_SIZE * 0.5, TILE_SIZE), (TILE_SIZE * 0.75, TILE_SIZE * 0.4), (TILE_SIZE, TILE_SIZE)])
+
+    moon_spike_images['normal'] = {}
+    moon_spike_images['normal']['up'] = moon_spike_base
+    moon_spike_images['normal']['down'] = pygame.transform.rotate(moon_spike_base, 180)
+    moon_spike_images['normal']['left'] = pygame.transform.rotate(moon_spike_base, 90)
+    moon_spike_images['normal']['right'] = pygame.transform.rotate(moon_spike_base, -90)
+    
+    try:
+        moon_spike_deep = pygame.image.load('MoonSpikeDeep.png').convert_alpha()
+        moon_spike_deep = pygame.transform.scale(moon_spike_deep, (TILE_SIZE, TILE_SIZE))
+    except pygame.error:
+        moon_spike_deep = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        pygame.draw.polygon(moon_spike_deep, (100, 150, 255), [(0, TILE_SIZE), (TILE_SIZE * 0.25, TILE_SIZE * 0.4), (TILE_SIZE * 0.5, TILE_SIZE), (TILE_SIZE * 0.75, TILE_SIZE * 0.4), (TILE_SIZE, TILE_SIZE)])
+
+    moon_spike_images['deep'] = {}
+    moon_spike_images['deep']['up'] = moon_spike_deep
+    moon_spike_images['deep']['down'] = pygame.transform.rotate(moon_spike_deep, 180)
+    moon_spike_images['deep']['left'] = pygame.transform.rotate(moon_spike_deep, 90)
+    moon_spike_images['deep']['right'] = pygame.transform.rotate(moon_spike_deep, -90)
+
+    tiles, checkpoints, decorations_list = load_level(current_level)
+
     # Boss assets - will be loaded when needed
     try:
         mo_boss_img = pygame.image.load('DJ Oser.png').convert_alpha()
@@ -1833,38 +2288,6 @@ def main():
         joy = pygame.joystick.Joystick(i)
         joy.init()
         joysticks.append(joy)
-
-    # Moon spike image loading and rotated variants
-    moon_spike_images = {}
-    try:
-        moon_spike_base = pygame.image.load('MoonSpike.png').convert_alpha()
-        moon_spike_base = pygame.transform.scale(moon_spike_base, (TILE_SIZE, TILE_SIZE))
-    except pygame.error:
-        moon_spike_base = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-        pygame.draw.polygon(moon_spike_base, (200, 200, 255), [(0, TILE_SIZE), (TILE_SIZE * 0.25, TILE_SIZE * 0.4), (TILE_SIZE * 0.5, TILE_SIZE), (TILE_SIZE * 0.75, TILE_SIZE * 0.4), (TILE_SIZE, TILE_SIZE)])
-
-    moon_spike_images['normal'] = {}
-    moon_spike_images['normal']['up'] = moon_spike_base
-    moon_spike_images['normal']['down'] = pygame.transform.rotate(moon_spike_base, 180)
-    moon_spike_images['normal']['left'] = pygame.transform.rotate(moon_spike_base, 90)
-    moon_spike_images['normal']['right'] = pygame.transform.rotate(moon_spike_base, -90)
-    
-
-       # Load deep MoonSpikeDeep.png
-    try:
-        moon_spike_deep = pygame.image.load('MoonSpikeDeep.png').convert_alpha()
-        moon_spike_deep = pygame.transform.scale(moon_spike_deep, (TILE_SIZE, TILE_SIZE))
-    except pygame.error:
-        moon_spike_deep = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-        pygame.draw.polygon(moon_spike_deep, (100, 150, 255), [(0, TILE_SIZE), (TILE_SIZE * 0.25, TILE_SIZE * 0.4), (TILE_SIZE * 0.5, TILE_SIZE), (TILE_SIZE * 0.75, TILE_SIZE * 0.4), (TILE_SIZE, TILE_SIZE)])
-    
-    moon_spike_images['deep'] = {}
-    moon_spike_images['deep']['up'] = moon_spike_deep
-    moon_spike_images['deep']['down'] = pygame.transform.rotate(moon_spike_deep, 180)
-    moon_spike_images['deep']['left'] = pygame.transform.rotate(moon_spike_deep, 90)
-    moon_spike_images['deep']['right'] = pygame.transform.rotate(moon_spike_deep, -90)
-
-    tiles, checkpoints, decorations_list = setup_level(LEVEL_MAP, moon_spike_images)
 
     fading = False
     fade_alpha = 0
@@ -1909,7 +2332,9 @@ def main():
                 print(f"Controller disconnected: {removed_id if removed_id is not None else event.device_index}")
 
             # Jump logic only in playing state
-            if game_state == "PLAYING" and not active_dialogue:
+            # Allow jump input if no dialogue, or if dialogue is passive
+            can_jump = not active_dialogue or (active_dialogue and active_dialogue.is_passive)
+            if game_state == "PLAYING" and can_jump:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_z: 
                         is_running = keys[pygame.K_x] and abs(Vio.vel_x) > WALK_SPEED
@@ -1928,7 +2353,8 @@ def main():
                         Vio.jump(is_running)
         if game_state == "PLAYING":
             if active_dialogue:
-                skip = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+                
+                skip = [keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]] and canSkip == True
                 active_dialogue.update(keys, skip_held=skip)
                 if active_dialogue.finished:
                     # Check if this was the boss intro dialogue
@@ -1937,7 +2363,7 @@ def main():
                         
                     active_dialogue = None
                     npc.talk_cooldown = 30
-            if boss_triggered:
+            if boss_triggered and not boss_finished:
                 # Set the limits (Leave a little padding so Vio doesn't touch the literal edge)
                 min_x = 15000 + 10
                 max_x = 15000 + 1200 - Vio.rect.width - 10
@@ -1966,13 +2392,14 @@ def main():
                 game_state = "PLAYING"
         elif game_state == "PLAYING":
             camera.update(Vio.rect)
-
-            if not active_dialogue:
-                 Vio.update(tiles)
-            if active_dialogue:
-                Vio.vel_x = 0
-                Vio.vel_y = 0
-                Vio.update_animation()
+           
+            # Only lock controls if dialogue is NOT passive
+            cutscene_mode = active_dialogue and not getattr(active_dialogue, 'is_passive', False)
+            Vio.update(tiles, trail_particles, cutscene_mode=cutscene_mode)
+            
+            #if active_dialogue:
+                #Vio.update_animation()
+            
             for cp in checkpoints:
                 cp.update(Vio)
             for hazard in hazards:
@@ -1999,12 +2426,35 @@ def main():
 
 
             #========LEVEL 1 BOSS=====================================
-            if not boss_triggered and Vio.rect.x > BOSS_ARENA1_START_X:
+            #if ship and not ship.active:
+                    #ship.activate()
+            #if ship and ship.active:
+                #if Vio.rect.colliderect(ship.rect) and not ship.taking_off:
+                    #if z_currently_held and not z_was_held:
+                        #Vio.visible = False 
+                        #Vio.can_move = False 
+                        #ship.start_takeoff(2)
+
+                #if ship.update():
+                 #   game_state = "MEMORY_TRANSITION" 
+                  #  memory_text = [
+                    #    "Lin: You're playing too fast again, Vio.",
+                    #    "Lin: If you rush the ending... | you'll miss the best part of the song.",
+                    #    "Vio: The best part?",
+                    #    "Lin: The part where we're playing together. | Don't leave me behind, okay?"
+                  #  ]
+                    
+                  #  active_dialogue= DialogueBox(font, memory_text, autoplay = True, is_passive=False)
+                    #if ship.target_level is not None:
+                        #load_level(ship.target_level)
+            if not boss_triggered and Vio.rect.x > BOSS_ARENA1_START_X and Vio.rect.x <17000:
+                
                 boss_triggered = True
                 # Create the boss and manager
                 mo_boss = DJOserBoss(15000 + WIDTH // 2 - TILE_SIZE, 780, mo_boss_img, font)
                 boss_manager = BossManager(mo_boss, boombox_img, shockwave_img, font)
                 boss_state = "INTRO"
+                s
                 
                 if boss_first_entry:
                     active_dialogue = DialogueBox(
@@ -2013,20 +2463,30 @@ def main():
                             "YO! YO! YO! What up, Captain? Wanna jam with good ol' DJ Oser?",
                             "@Captain Vio:The music sheet, Mo.* Now. ",
                             "@DJ Oser:GASP! Mo? I'm DJ Oser now! See, I used to be just an unconscious \nmeteor, but now,--",
-                            "@Captain Vio: I said,| GIVE.| IT.| NOW.|",
-                            "@DJ Oser: Yer ruining the good vibes. I should teach you a lesson. \nOHHOHOHOHOHOHOHHOHOHOHOHOH"
+                            "@Captain Vio_Down: ......",
+                            "@DJ Oser:Uh...what's that look for? \nYer ruining the good vibes. I should teach you a lesson. \nOHHOHOHOHOHOHOHHOHOHOHOHOHOOO!!!"
                         ],
                         speaker_name="DJ Oser",
                         has_background=True
                     )
                     boss_first_entry = False
+                    
+            
                 else:    
                     boss_manager.transition_to_falling()
                     boss_state = "FIGHTING"
                     active_dialogue = None
+            if active_dialogue and boss_state == "INTRO":
+                #Vio.vel_x =0
+                if active_dialogue.current_sentence == 3: 
+                    if Vio.cutscene_target_x is None: # Only set it once
+                        Vio.cutscene_target_x = 15000 + 100
+                        Vio.cutscene_speed = 1.0
             # Update boss manager if active
             if boss_manager:
                 boss_manager.update(Vio, keys)
+                if boss_manager.battle_dialogue:
+                    active_dialogue = boss_manager.battle_dialogue
                 # Check for wave collisions with player
                 boss_manager.check_wave_player_collision(Vio)
                 
@@ -2057,22 +2517,32 @@ def main():
                     active_dialogue = DialogueBox(
                         font,
                         [
-                           "Hi I'm placeholder text for after the boss battle. \nCongrats for destroying those two speakers. Now we wait....."
+                           "My precious delight! My...my precious......."
                         ],
-                        speaker_name="Moistar",
+                        speaker_name="Moistar", autoplay= True, auto_delay = 50,
                         has_background=True
                     )
                     boss_manager.state = "FINISHED"
-        #==================================================================================
+
+            if boss_manager and boss_manager.state == "FINISHED":
+                if ship and not ship.active:
+                    ship.activate()
+
+                if ship and ship.active:
+                    if Vio.rect.colliderect(ship.rect) and not ship.taking_off:
+                        if z_currently_held and not z_was_held:
+                            Vio.visible = False 
+                            Vio.can_move = False 
+                            ship.start_takeoff(2)
+
+                    if ship.update():
+                        if ship.target_level is not None:
+                            load_level(ship.target_level)
 
 
-        # Draw based on game state
-        
-        if game_state == "INTRO":
-            screen.fill((0, 0, 0))  # Pure black
-            intro_dialogue.draw(screen, WIDTH // 2 - 200, HEIGHT // 2)
-        elif game_state == "PLAYING":
-            screen.fill((124, 57, 103))  # Dark purple background
+
+            #DRAW===================================
+            screen.fill((124, 57, 103))
             for star in stars:
                 star.update()
                 star.draw(screen, camera)
@@ -2133,7 +2603,10 @@ def main():
                     particle.draw(screen)
                     
 
-        if game_state == "PLAYING":
+        if game_state == "INTRO":
+            screen.fill((0, 0, 0))
+            intro_dialogue.draw(screen, WIDTH // 2 - 200, HEIGHT // 2)
+        elif game_state == "PLAYING":
             health_text = font.render(f"Health: {Vio.health}", True, (255, 255, 255))
             screen.blit(health_text, (10, 10))
             for cp in checkpoints:
@@ -2141,31 +2614,69 @@ def main():
             for npc in npcs:
                 npc.draw(screen, camera)
                 npc.draw_prompt(screen, camera, Vio.rect)
+
+            # Draw boss manager if active
+            if boss_manager:
+                boss_manager.draw(screen, camera)
+
+            if ship:
+                ship.draw(screen, camera)
+                if ship.active and not ship.taking_off and Vio.rect.colliderect(ship.rect):
+                    prompt_text = font.render("Press Z to board the ship", True, (255, 255, 255))
+                    prompt_pos = camera.apply(pygame.Rect(Vio.rect.centerx - 80, Vio.rect.top - 40, 160, 20))
+                    screen.blit(prompt_text, (prompt_pos.x, prompt_pos.y))
+
             if Vio.visible:
                 for trail in trail_particles:
                     trail.draw(screen, camera)
                 draw_image = Vio.image
                 if not Vio.invulnerability_timer >0 or (pygame.time.get_ticks() // 50) % 2 == 0:
                     screen.blit(draw_image, camera.apply(Vio.rect))
-            
-            # Draw boss manager if active
-            if boss_manager:
-                boss_manager.draw(screen, camera)
 
+        #boss1 cutscene
+        if boss_manager and hasattr(boss_manager, 'memory_fade') and boss_manager.memory_fade > 0:
+            fade_surf = pygame.Surface((WIDTH, HEIGHT))
+            fade_surf.fill((0, 0, 0)) # Pure black
+            fade_surf.set_alpha(boss_manager.memory_fade)
+            screen.blit(fade_surf, (0, 0))
+            
+        #    DRAW  SHIP===
+        if ship.active and ship.transition_fade > 0:
+            fade_surf = pygame.Surface((WIDTH, HEIGHT))
+            fade_surf.fill((0, 0, 0))
+            fade_surf.set_alpha(ship.transition_fade)
+            screen.blit(fade_surf, (0, 0))
+
+        # If we are in the memory state, keep the screen black and show text
+        if game_state == "MEMORY_TRANSITION":
+            screen.fill((0, 0, 0))
+            # Draw your Lin memory text here!
+            # Once the player presses Z to skip or timer ends:
+            # load_level(2)
+            # game_state = "PLAYING"
 
         if active_dialogue:
-            # Draw a simple box background for the text
-            box_x = WIDTH // 2 - 350
-            box_y = HEIGHT - 150
-            pygame.draw.rect(screen, (0, 0, 0), (box_x, box_y, 700, 150)) # Black box
-            pygame.draw.rect(screen, (255, 255, 255), (box_x, box_y, 700, 150), 2) # White border
-            active_dialogue.draw(screen, box_x + 20, box_y + 20)
-
-
+            if not active_dialogue.is_passive:
+                box_x = WIDTH // 2 - 350
+                box_y = HEIGHT - 150
+                pygame.draw.rect(screen, (0, 0, 0), (box_x, box_y, 700, 150)) # Black box
+                pygame.draw.rect(screen, (255, 255, 255), (box_x, box_y, 700, 150), 2) # White border
+                active_dialogue.draw(screen, box_x + 20, box_y + 20)
+            else:
+                # Passive dialogue draws itself at the top
+                active_dialogue.draw(screen)
+        if active_dialogue and getattr(active_dialogue, 'trigger_glitch', False):
+    
+            screen_copy = screen.copy()
+            screen.fill((255, 255, 255))
+            for i in range(0, HEIGHT, 6): # Adjust '4' for thicker/thinner scanlines
+                offset = random.randint(-20, 20)
+                screen.blit(screen_copy, (offset, i), (0, i, WIDTH, 4))
+        
         pygame.display.flip()
         clock.tick(60)
         pygame.display.set_caption(f" X: {Vio.rect.x} Y: {Vio.rect.y}")
-LEVEL_MAP = [
+LEVEL1_MAP = [
     '........................................................................................................................................................................................................................................G..GG...G...G...G...G...G...G...G...G...G..G..G...G...G...G...G...GG...G...G...G..G...GG...',
     '.................................................................................................................................................................................................................................................................................................................................',
     '.................................................................................................................................................................................................................................................................................................................................',
@@ -2173,17 +2684,17 @@ LEVEL_MAP = [
     '....................................................................................................................................................................................................................................................................................................................................................................$',
     '...........................................................................................................................................................................................................................................G.....................................................................................',
     '.......................................................................................................................................................................................................................................G...G.........................................................................................$....................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G........GG...dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.........$$...........$...$.$...................................',
-    '...............................................................................................................................................................................................................................................r..........................d######..G...G...G...G..G..$G...G...G...G..$$...........................$..............................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G........GG...dddddddddddddddddddddddddd#############################################ddddd.........$$..............$.$...................................',
+    '...............................................................................................................................................................................................................................................r..........................d######..G...G...G...G..G..$G...G...G...G..$$.........................................................................................',
     '.......................................................................................................................................................................................................................................G...G...$...........................d#####..G...G...G...G..G..$G...G...G...G..$$...................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.........................................d####....................................$$...........................$.....................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.........................................d####....................................$$................................................................................',
     '...............................................................................................................................................................................................................................................$.............................d###....................................................................................................................',
     '.......................................................................................................................................................................................................................................G...G...#..............................d##........................................................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............#..........#########...............................................................................$........................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............#..........#########.......................................................................................................................................................',
     '...............................................................................................................................................................................................................................................$..........#########.......................................................................................................................................................',
     '.......................................................................................................................................................................................................................................G...G..............lG...G..........................................................................................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.......................lG...G....MMmmmmmmMGGGGGGGGGGGGGGGGGGGGGGGGGG..G..G..G...G.G............................$...........................................................................',
-    '...............................................................................................................................................................................................................................................$..........lG...G....G...G...G.G...#....#GGGGGGoGGGGGGG............................................$...$.$$$....................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.......................lG...G....MMmmmmmmMGGGGGGGGGGGGGGGGGGGGGGGGGG..G..G..G.............................................................................................................',
+    '...............................................................................................................................................................................................................................................$..........lG...G....G...G...G.G...#....#GGGGGGoGGGGGGG..................................................................................................................',
     '.......................................................................................................................................................................................................................................G...G..............lG...G..................l....#GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG................',
     '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G......,,,..............lG...G..................lG...#GGGGGGGGGGGGGG....................................................................................................................',
     '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............$..........lG...G....G...G...G.G...l....#GGGGGGGGGGGGGG....................................................................................................................',
@@ -2221,10 +2732,10 @@ LEVEL_MAP = [
     '...............................ldr......$$$.....................LR..............................................................#............................................................l#####r.....l#########################################################r..............l....r..',
     '......................###...............$$$...........$$$$$$$...LR........................................-..--.................#................................................#####.......l#####r.....l#########################################################r..............lG...r...',
     '......................-#o...............$$$U.........GGGGGGGGGGGGGGGGGGGGGGGG...#####GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..G...G...#................................................l###r.......l#####r.....l#########################################################r..............l####r...',
-    '.................---..###.............MM$$$$$$$$$$......o.......................#-o##.....................x.....................#.....................................####.......l###r.......l#####r.....l##########################################################mmmmmmmmmmmmmm######..',
-    '.................$$$$$$$$.............$$$G..G...$$..............-.....-..-......#####...........................................#.....................C...............l##r.......l###r.......l#####r.....l##############################################################################.',
-    '.........N.......$$$$$..........M.......G.......................................ddddd...........................................#..................S..................l##r.......l###r.......l#####r.....l##############################################################################',
-    '...............................L#R..........................................................dddddd................................................###.U...#####,,,,,,,l##r.......l###r.......l#####r.....l#########################################################################################################################################################################..',
+    '.................---..###.............MM$$$$$$$$$$......o.......................#-o##.....................x.....................#.....................................####.......l###r.......l###r.......l#####r.....l##########################################################mmmmmmmmmmmmmm######..',
+    '.................$$$$$$$$.............$$$G..G...$$..............-.....-..-......#####...........................................#.....................C...............l##r.......l###r.......l###r.......l#####r.....l##############################################################################.',
+    '.........N.......$$$$$..........M.......G.......................................ddddd...........................................#..................S..................l##r.......l###r.......l###r.......l#####r.....l##############################################################################',
+    '...............................L#R..........................................................dddddd................................................###.U...#####,,,,,,,l##r.......l###r.......l###r.......l#####r.....l#########################################################################################################################################################################..',
     '##Go#########....#########MMMMG##oMMMM$$$.G..G..$$..................................................................S.............................l###...#####r.......l##r.......l###r.......l#####r.....l#########################################################################################################################################################################...........',
     '#####Go######MMMM#########G.G..G..G..G...G..G...$$................................................................................................l###########r.......l##r.......l###r.......#######.....l#########################################################################################################################################################################..................................................',
     '#Go##########Go###########..G...G...G...G...G.....................................................................................................l############mmmmmmm####mmmmmmm#####mmmmmmm#######mmmmm##########################################################################################################################################################################.........................................',
@@ -2235,4 +2746,77 @@ LEVEL_MAP = [
     'W..............................WW....................................................................................#',
 
 ]
+
+LEVEL2_MAP = [
+    '........................................................................................................................................................................................................................................G..GG...G...G...G...G...G...G...G...G...G..G..G...G...G...G...G...GG...G...G...G..G...GG...',
+    '.................................................................................................................................................................................................................................................................................................................................',
+    '.................................................................................................................................................................................................................................................................................................................................',
+    '.......................................................................................................................................................................................................................................G...GG...G...G...G...G...G...G...G...G...G...G..G...G...G...G...G...G...G...G...G...G...G..G...G...G...G..G...G...G...G..G...G...G...G..G...G...G...G..G...G...G...G.',
+    '....................................................................................................................................................................................................................................................................................................................................................................$',
+    '...........................................................................................................................................................................................................................................G.....................................................................................',
+    '.......................................................................................................................................................................................................................................G...G.........................................................................................$....................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G........GG...dddddddddddddddddddddddddd#############################################ddddd.........$$..............$.$...................................',
+    '...............................................................................................................................................................................................................................................r..........................d######..G...G...G...G..G..$G...G...G...G..$$.........................................................................................',
+    '.......................................................................................................................................................................................................................................G...G...$...........................d#####..G...G...G...G..G..$G...G...G...G..$$...................................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.........................................d####....................................$$................................................................................',
+    '...............................................................................................................................................................................................................................................$.............................d###....................................................................................................................',
+    '.......................................................................................................................................................................................................................................G...G...#..............................d##........................................................................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............#..........#########.......................................................................................................................................................',
+    '...............................................................................................................................................................................................................................................$..........#########.......................................................................................................................................................',
+    '.......................................................................................................................................................................................................................................G...G..............lG...G..........................................................................................................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.......................lG...G....MMmmmmmmMGGGGGGGGGGGGGGGGGGGGGGGGGG..G..G..G.............................................................................................................',
+    '...............................................................................................................................................................................................................................................$..........lG...G....G...G...G.G...#....#GGGGGGoGGGGGGG..................................................................................................................',
+    '.......................................................................................................................................................................................................................................G...G..............lG...G..................l....#GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G......,,,..............lG...G..................lG...#GGGGGGGGGGGGGG....................................................................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............$..........lG...G....G...G...G.G...l....#GGGGGGGGGGGGGG....................................................................................................................',
+    '.......................................................................................................................................................................................................................................G...G..............lG...G...r..............l....#GGGGGGGGGGGGGG....................................................................................................................',
+    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G...F........$..........lG...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
+    '.............................................................................................................................................................................G...#####..............................................G.....................lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '.............................................................................................................................................................................G...#####G...G...G...G...G...G...G...G...G...G...G...G.G...G..G..............lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '.............................................................................................................................................................................G...#####.........................................................r..........lG...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
+    '.............................................................................................................................................................................G...#####.........................................................#r.........$G...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '.............................................................................................................................................................................G...#####.........................................................##r.........G...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
+    '...............................................................mm............................................................................................................G...#G...ddddddddddddddddddddddddddddddddddddddddd###################r........G...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '............................................VVVV..............L##R...........................................................................................................G...#............VVV..............................D###################r......lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#..............................................Ddd#####Go#####G...r......lG...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#G..................................................L#########G...r......lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#....................................................l########G...r......lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#.....................................................l#######G...r......$G...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#G.....................................................#######G...r.......G...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#.......................................................DddddDG...r.......G...G...r..............lG...r..................................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#.............................................................G...r......lG...G...r..............l....r..................................................................................................................................',
+    '..............................................................L##R...........................................................................................................G...#G............................................................G...$......lG...G...r..............l....r..............GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG',
+    '..............................................................L##R...........................................................................................................G...#........................................................................lG...G...r..............lG...r',
+    '..............................................................L##R...........................................................................................................G...#.......................l###########.....................................lG...G...r..............l....r',
+    '..............................................................L##R...........................................................................................................G...#G......................l##Go########................S............#......lG...G...r..............l....r',
+    '..............................................................L##R...........................................................................................................G...#...........#######.....l#############................S..................lG...G...r..............lG...r',
+    '...........................................................U..L##R.......................................................G...G...G...G...G...G...G...G...G...G...G...G...G...G...#..........Sl#####r.....l###Go#########..................................lG...G...r..............l....r',
+    '..........................................MGGGGGGGG.......GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......G...G...G...G...G...G...G...G...G...G...G...G...G...G...G...........l#####r.....l###############....mmmmmmmm.....................lG...G...r..............l....r',
+    '..........................................$$$....................................................................................................................................#...r.......l#####r.....l#####################Go####Go######Go####################r..............lG...r.',
+    '...............................lmr........$-o.....................---............................................................................................................#...r.......l#####r.....l#########################################################r..............l....r..',
+    '...............................l#r........$$$....................................................................................................................................#...r......Sl#####r.....l#########################################################r..............l....r..',
+    '...............................l#r........$$$...................M.......................................................#########ddddddddddddddddddddddddddddddddddddddddddddddddddddd.......l#####r.....l#########################################################r..............lG...r.',
+    '...............................l#r......MM$$$..................LR........................................................G...G..#............................................................l#####r.....l#########################################################r..............l....r...',
+    '...............................l#r......$$$.....................LR..............................................................#............................................................l#####r.....l#########################################################r..............l....r.',
+    '...............................l#r......$$$......................LR---................---.......................................#............................................................l#####r.....l#########################################################r..............lG...r....',
+    '...............................l#r......$$$......................LRG...G...G...G...G...Go..G...G...G...G...G...G...G.G...G...G..#............................................................l#####r.....l#########################################################r..............l....r...' ,
+    '...............................ldr......$$$.....................LR..............................................................#............................................................l#####r.....l#########################################################r..............l....r..',
+    '......................###...............$$$...........$$$$$$$...LR........................................-..--.................#................................................#####.......l#####r.....l#########################################################r..............lG...r...',
+    '......................-#o...............$$$U.........GGGGGGGGGGGGGGGGGGGGGGGG...#####GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..G...G...#................................................l###r.......l#####r.....l#########################################################r..............l####r...',
+    '..NNNNN...............---..###.............MM$$$$$$$$$$......o.......................#-o##.....................x.....................#.....................................####.......l###r.......l###r.......l#####r.....l##########################################################mmmmmmmmmmmmmm######..',
+    '.................$$$$$$$$.............$$$G..G...$$..............-.....-..-......#####...........................................#.....................C...............l##r.......l###r.......l###r.......l#####r.....l##############################################################################.',
+    '.........N.......$$$$$..........M.......G.......................................ddddd...........................................#..................S..................l##r.......l###r.......l###r.......l#####r.....l##############################################################################',
+    '...............................L#R..........................................................dddddd................................................###.U...#####,,,,,,,l##r.......l###r.......l###r.......l#####r.....l#########################################################################################################################################################################..',
+    '##Go#########....#########MMMMG##oMMMM$$$.G..G..$$..................................................................S.............................l###...#####r.......l##r.......l###r.......l#####r.....l#########################################################################################################################################################################...........',
+    '#####Go######MMMM#########G.G..G..G..G...G..G...$$................................................................................................l###########r.......l##r.......l###r.......#######.....l#########################################################################################################################################################################..................................................',
+    '#Go##########Go###########..G...G...G...G...G.....................................................................................................l############mmmmmmm####mmmmmmm#####mmmmmmm#######mmmmm##########################################################################################################################################################################.........................................',
+    '######Go##################..G...G...G...G...G......U..............................S..................S............................................l################################################################################################################################################################################################################################',
+    'G...G...G...G...G...G...G...G...G...G...G...G...GGGGGGGGGGGoGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..#G...G...G...G...G...G...G...G...G...G.#######################################################################################################################################################################################################################',
+    'G...G...G...G...G..G...G...G...GW..G...G...G...G.....................................................................#',
+    '..............................W.................G...G...G...G...G...G...G..G...G...G...G...G...G...G...G...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...G........................................#',
+    'W..............................WW....................................................................................#',
+
+]
+
+LEVEL_MAP = LEVEL1_MAP
 if __name__ == "__main__": main()
