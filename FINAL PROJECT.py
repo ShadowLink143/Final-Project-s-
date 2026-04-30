@@ -457,8 +457,8 @@ class Star:
         surface.blit(image, rect)
 
 
-default_pos = (17100, 624) #(switch commenting the one below for just testing the 1st boss)
-#default_pos = (100, 2724)
+#default_pos = (17100, 624) #(switch commenting the one below for just testing the 1st boss)
+default_pos = (100, 2724)
 # Get initial image from idle animation
 LEVEL_START_POINTS = {
     1: default_pos,
