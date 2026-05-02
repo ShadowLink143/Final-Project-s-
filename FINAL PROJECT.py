@@ -1127,8 +1127,8 @@ class BoomBox:
         self.is_active = False
 
         # Button attributes
-        self.button_health = 1
-        self.button_max_health = 1
+        self.button_health = 3
+        self.button_max_health = 3
         self.button_x = x + (TILE_SIZE if side == "left" else TILE_SIZE)
         self.button_y = y + TILE_SIZE * 2
         self.button_radius = TILE_SIZE // 2
