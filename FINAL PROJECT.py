@@ -38,7 +38,7 @@ current_level = 1
 active_neon_color = 'green'
 neon_images = {}
 neon_toggle_timer = 0  # Timer for delaying neon color toggle after jump
-
+ 
 ship = None
 shadow = None
 moon_spike_images = None
@@ -104,8 +104,9 @@ donut_img = pygame.image.load("Donut.png").convert_alpha()
 
 
 class DialogueBox:
-    def __init__(self, font, text_list, speaker_name="", autoplay=False, auto_delay=120, has_background=True, has_portrait=None, is_passive=False):
+    def __init__(self, font, text_list, speaker_name="", autoplay=False, auto_delay=120, has_background=True, has_portrait=None, is_passive=False, text_color=(255, 255, 255)):
         self.is_passive = is_passive
+        self.text_color = text_color
         self.font = font
         self.text_list = text_list
         self.speaker_name = speaker_name
@@ -274,7 +275,7 @@ class DialogueBox:
             screen.blit(overlay, (0, 0))
             
             # Draw text
-            text_surf = self.font.render(self.current_text, True, (255, 0, 255))
+            text_surf = self.font.render(self.current_text, True, self.text_color)
             screen.blit(text_surf, (50, 25))
             
             # Draw name
@@ -2192,6 +2193,8 @@ def load_level(level_number):
     if level_number == 2:
         active_neon_color = 'green'
         LEVEL_MAP = LEVEL2_MAP
+        #active_dialogue = DialogueBox(font, ["Princess Kira's Castle"], autoplay=True, has_background=False, is_passive=True, text_color=(255, 0, 255))
+   
     if level_number == 1:
         LEVEL_MAP = LEVEL1_MAP
     #else:
@@ -2776,18 +2779,26 @@ def main():
             if boss_manager and boss_manager.state == "FINISHED":
                 if ship and not ship.active:
                     ship.activate()
+            if ship and ship.active:
+                if Vio.rect.colliderect(ship.rect) and not ship.taking_off:
+                    if z_currently_held and not z_was_held:
+                        Vio.visible = False 
+                        Vio.can_move = False 
+                        
+                        ship.start_takeoff(2)
 
-                if ship and ship.active:
-                    if Vio.rect.colliderect(ship.rect) and not ship.taking_off:
-                        if z_currently_held and not z_was_held:
-                            Vio.visible = False 
-                            Vio.can_move = False 
-                            ship.start_takeoff(2)
-
-                    if ship.update():
-                        if ship.target_level is not None:
-                            tiles, checkpoints, decorations_list = load_level(ship.target_level)
-
+                if ship.update():
+                    game_state = "MEMORY_TRANSITION" 
+                    memory_text = [
+                        "@Lin:something",
+                       # "@: ",
+                        #"@: ",
+                        #"@: "
+                    ]
+                    
+                    active_dialogue= DialogueBox(font, memory_text, autoplay = True, has_background=True, is_passive=False)
+                    #if ship.target_level is not None:
+                        #load_level(ship.target_level)
             
 
             #DRAW===================================
