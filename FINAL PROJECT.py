@@ -21,16 +21,23 @@ RUN_JUMP_FORCE = -18
 DASH_SPEED = 18
 DASH_TIME = 15  
 DASH_COOLDOWN = 20
+
+DEBUG_LEVEL_2 = False
 canSkip = False
+
 active_dialogue=None
 boss_triggered = False
 boss_finished = False
-boss_manager = None  # Will be initialized when boss is triggered
+boss_manager = None  
 boss_state = None  # Can be "INTRO", "FIGHTING", "DAZED", "BONKED"
-boss_first_entry = True  # Track first entry vs re-entry to skip dialogue
+boss_first_entry = True  
+
 
 # Level state
 current_level = 1
+active_neon_color = 'green'
+neon_images = {}
+neon_toggle_timer = 0  # Timer for delaying neon color toggle after jump
 
 ship = None
 shadow = None
@@ -267,7 +274,7 @@ class DialogueBox:
             screen.blit(overlay, (0, 0))
             
             # Draw text
-            text_surf = self.font.render(self.current_text, True, (255, 255, 255))
+            text_surf = self.font.render(self.current_text, True, (255, 0, 255))
             screen.blit(text_surf, (50, 25))
             
             # Draw name
@@ -462,7 +469,7 @@ default_pos = (100, 2724)
 # Get initial image from idle animation
 LEVEL_START_POINTS = {
     1: default_pos,
-    2: (100, 2724)
+    2: (800, 824)
 }
 
 class Player:
@@ -568,6 +575,8 @@ class Player:
         self.rect.y += self.vel_y
             
         for tile in tiles:
+            if tile.type == 'neon' and not tile.is_active():
+                continue
             if self.rect.colliderect(tile.rect):
                 if tile.type == 'moonspike' or tile.type == 'shockwave':
                     self.take_damage(self.max_health)
@@ -578,7 +587,7 @@ class Player:
                         self.is_jumping = False
                         self.dash_spent = False
                         self.dash_ready = True
-                elif tile.type == 'normal':
+                elif tile.type == 'normal' or tile.type == 'neon':
                     if self.vel_y > 0: 
                         self.rect.bottom = tile.rect.top
                         self.vel_y = 0
@@ -655,6 +664,7 @@ class Player:
             self.dash_ready = False 
             self.dash_timer = DASH_TIME
             self.dash_cooldown = DASH_COOLDOWN
+            toggle_neon_color()
             if input_x == 0 and input_y == 0:
                 self.dash_direction = (1 if self.facing_right else -1, 0)
             else:
@@ -711,10 +721,12 @@ class Player:
             # Cap the speed so he doesn't accelerate forever
             if self.vel_x > max_speed: self.vel_x = max_speed
             if self.vel_x < -max_speed: self.vel_x = -max_speed
-
+            
         previous_rect = self.rect.copy()  # Save position before horizontal movement
         self.rect.x += self.vel_x
         for tile in tiles:
+            if tile.type == 'neon' and not tile.is_active():
+                continue
             if self.rect.colliderect(tile):
                 # Platform tiles don't block horizontal movement
                 if tile.type == 'platform':
@@ -731,7 +743,7 @@ class Player:
                             if self.is_jumping:  # Only set on_wall when in air
                                 self.on_wall = 'left'
                 # Normal tiles block all directions
-                elif tile.type == 'normal':
+                elif tile.type == 'normal' or tile.type == 'neon':
                     if not previous_rect.colliderect(tile):  # Only resolve if overlap is new
                         if self.vel_x > 0: # Moving right
                             self.rect.right = tile.rect.left
@@ -744,9 +756,9 @@ class Player:
 
         # Wall slide detection using sensors and active input
         # Only engage wall slide if actively pressing toward wall while in air
-        wall_touch_right = any(tile.type in ('wall', 'normal') and right_sensor.colliderect(tile) 
+        wall_touch_right = any(((tile.type in ('wall', 'normal')) or (tile.type == 'neon' and tile.is_active())) and right_sensor.colliderect(tile) 
                                for tile in tiles)
-        wall_touch_left = any(tile.type in ('wall', 'normal') and left_sensor.colliderect(tile) 
+        wall_touch_left = any(((tile.type in ('wall', 'normal')) or (tile.type == 'neon' and tile.is_active())) and left_sensor.colliderect(tile) 
                               for tile in tiles)
         
         # Engage wall slide: must be in air, falling, and actively pressing toward wall
@@ -846,6 +858,8 @@ class Player:
             self.vel_y = force
             self.is_jumping = True
             self.air_control_timer = 20
+            toggle_neon_color()
+            return True
         elif self.on_wall and self.wall_jump_cooldown == 0:
             # Wall jump: require pressing direction away from wall
             if (input_x == -1) or (input_x == 1):
@@ -863,6 +877,9 @@ class Player:
                 self.wall_jump_cooldown = 15
                 self.dash_spent = False 
                 self.dash_ready = True
+                toggle_neon_color()
+                return True
+        return False
 
     def take_damage(self, amount):
         if amount <= 0 or self.invulnerability_timer >0: #self.is_invincible == True
@@ -889,6 +906,44 @@ class Player:
 
     def is_dead(self):
         return self.health <= 0
+
+
+def toggle_neon_color():
+    global active_neon_color, neon_toggle_timer
+    if neon_toggle_timer <= 0:
+        neon_toggle_timer = 10  # Delay toggle by 10 frames
+
+def update_neon_toggle():
+    global neon_toggle_timer, active_neon_color
+    if neon_toggle_timer > 0:
+        neon_toggle_timer -= 1
+        if neon_toggle_timer == 0:
+            active_neon_color = 'pink' if active_neon_color == 'green' else 'green'
+
+
+def load_neon_images():
+    global neon_images
+    try:
+        green_on_img = pygame.image.load('green_on_bl.png').convert_alpha()
+        pink_on_img = pygame.image.load('pink_off_bl.png').convert_alpha()
+    except pygame.error:
+        green_on_img = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        green_on_img.fill((0, 255, 0, 200))
+        pink_on_img = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        pink_on_img.fill((255, 0, 255, 200))
+
+    green_on_img = pygame.transform.scale(green_on_img, (TILE_SIZE, TILE_SIZE))
+    pink_on_img = pygame.transform.scale(pink_on_img, (TILE_SIZE, TILE_SIZE))
+
+    green_off_img = green_on_img.copy()
+    green_off_img.set_alpha(90)
+    pink_off_img = pink_on_img.copy()
+    pink_off_img.set_alpha(90)
+
+    neon_images = {
+        'green': {'active': green_on_img, 'inactive': green_off_img},
+        'pink': {'active': pink_on_img, 'inactive': pink_off_img}
+    }
 
 class Checkpoint:
     def __init__(self, x, y, image):
@@ -1199,7 +1254,7 @@ class Shadow(Hazard):
         self.vel_x = 0
         self.vel_y = 0
         self.ACCEL = 0.3
-        self.MAX_SPEED = 7.1
+        self.MAX_SPEED = 0.1
         self.FRICTION = 0.85
 
     def update(self, player):
@@ -1795,24 +1850,20 @@ class NPC:
 
         self.prompt_timer = 0
         self.talk_cooldown = 0 
-    def check_interaction(self, player, keys):
+
+        self.moistar_image = get_image(pygame.image.load('Moistar.png').convert_alpha(), 0, 35, 35, SCALE)
+        self.tv_img = get_image(pygame.image.load('TV.png').convert_alpha(), 0, 64, 54, SCALE)
+        
+
+    def check_interaction(self, player, confirm_pressed):
         if self.talk_cooldown > 0:
             self.talk_cooldown -= 1
             return False # Can't talk yet!
 
         distance = pygame.math.Vector2(self.rect.center).distance_to(player.center)
-        
-        # Check keyboard or controller
-        joy_press = False
-        if joysticks:
-            for joy in joysticks:
-                if joy.get_button(0) or joy.get_button(1):
-                    joy_press = True
-                    break
-                    
-        if distance < 60 and (keys[pygame.K_z] or joy_press):
+        if distance < 80 and confirm_pressed:
             return True
-            
+
         return False
 
     def draw_prompt(self, screen, camera, player_rect):
@@ -1840,10 +1891,11 @@ class NPC:
             ])
 
     def draw(self, screen, camera):
-
-        npcs = ["Moistar", "DJ Oser", "???"]
-        Moistar_image = get_image(pygame.image.load('Moistar.png').convert_alpha(), 0, 35, 35, SCALE)
-        screen.blit(Moistar_image, camera.apply(self.rect))
+        if self.name == "Jumbotron":
+            screen.blit(self.tv_img, camera.apply(self.rect))
+        else:
+            npcs = ["Moistar", "DJ Oser", "???", "Jumbotron"]
+            screen.blit(self.moistar_image, camera.apply(self.rect))
 
 class Tile:
     def __init__(self, rect, tile_type='normal', image=None, orientation='up'):
@@ -1861,42 +1913,123 @@ class Tile:
             # Fallback to gray square if image is missing
             pygame.draw.rect(screen, (100, 100, 100), camera.apply(self.rect))
 
+class NeonTile(Tile):
+    def __init__(self, rect, color, image_active, image_inactive):
+        super().__init__(rect, 'neon')
+        self.color = color
+        self.image_active = image_active
+        self.image_inactive = image_inactive
+        self.image = image_active
+
+    def is_active(self):
+        return active_neon_color == self.color
+
+    def draw(self, screen, camera):
+        active_image = self.image_active if self.is_active() else self.image_inactive
+        screen.blit(active_image, camera.apply(self.rect))
+
 class Decoration:
     def __init__(self, x, y, image):
         self.image = image
         self.rect = self.image.get_rect(topleft=(x, y))
 
     def draw(self, screen, camera):
+        #pygame.draw.rect(screen, (255, 0, 0), camera.apply(self.rect), 1)
         screen.blit(self.image, camera.apply(self.rect))
 
 
 def setup_level(layout, moon_spike_images=None):
+    global neon_images, current_level
     shockwave_image = pygame.image.load('shockwave.png').convert_alpha()
     shockwave_image = pygame.transform.scale(shockwave_image, (TILE_SIZE*2, TILE_SIZE))
+    
+    neon_tile_img = pygame.image.load("neon_bl.png").convert_alpha()
+    neon_tile_img = pygame.transform.scale(neon_tile_img, (TILE_SIZE*2, TILE_SIZE*2))
+    black_tile_img = pygame.image.load("black_pillar.png").convert_alpha()
+    black_tile_img = pygame.transform.scale(black_tile_img, (TILE_SIZE, TILE_SIZE*4))
+    neon_light_img = pygame.image.load("neon_bl_lights.png").convert_alpha()
+    neon_light_img = pygame.transform.scale(neon_light_img, (TILE_SIZE*4, TILE_SIZE*3))
+
+    neon_spike_r_img = pygame.image.load("neon_spike_r.png").convert_alpha()
+    neon_spike_r_img = pygame.transform.scale(neon_spike_r_img, (TILE_SIZE, TILE_SIZE*3))
+    neon_spike_l_img = pygame.image.load("neon_spike_l.png").convert_alpha()
+    neon_spike_l_img = pygame.transform.scale(neon_spike_l_img, (TILE_SIZE, TILE_SIZE*3))
+    
+    castle_back_img = pygame.image.load("castle_back.png").convert_alpha()
+    castle_back_img = pygame.transform.scale(castle_back_img, (TILE_SIZE*3, TILE_SIZE*3))
+
     tiles_list = []
     checkpoints = []
     decorations_list = []
     total_level_height = len(layout) * TILE_SIZE
     tree_img = pygame.image.load('moonTree.png').convert_alpha()
     tree_img = pygame.transform.scale(tree_img, (TILE_SIZE * 2, TILE_SIZE * 4))
-                
+    tv_count = 0            
     for row_index, row in enumerate(layout):
         for col_index, cell in enumerate(row):
             x = col_index * TILE_SIZE
             y = row_index * TILE_SIZE
             
             if cell == '#':
+                #print(f"DEBUG: Created a '#' tile at {x}, {y}")
                 # Normal solid tile
-                new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
-                tiles_list.append(Tile(new_rect, 'normal'))
+                
+                if current_level == 1:
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+                    tiles_list.append(Tile(new_rect, 'normal')) # Original Rock
+                else:
+                    # Level 2 Neon Trim Tile
+                    new_rect = pygame.Rect(x, y, TILE_SIZE*2, TILE_SIZE*2)
+                    tiles_list.append(Tile(new_rect, 'normal', image=neon_tile_img))
+            
             if cell == 'G':
-                #large normal tile
+                # large normal tile
                 new_rect = pygame.Rect(x, y, TILE_SIZE*4, TILE_SIZE*4)
-                tiles_list.append(Tile(new_rect, 'normal'))
+                if current_level == 1:
+                    tiles_list.append(Tile(new_rect, 'normal'))
+                
             elif cell == '$':
-                # Tall tile (3x height)
-                new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE*3)
-                tiles_list.append(Tile(new_rect, 'normal'))
+                if current_level == 1:
+                    # Tall tile (3x height)
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE*3)
+                    tiles_list.append(Tile(new_rect, 'normal'))
+                elif current_level == 2:
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE*3)
+                    tiles_list.append(Tile(new_rect, 'normal', image=black_tile_img))
+            elif cell == 's':
+                if current_level == 2:
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+                    decorations_list.append(Decoration(x, y, image=neon_light_img))
+
+            elif cell == '2':
+                if current_level == 2:
+                    new_rect = pygame.Rect(x, y, TILE_SIZE*3, TILE_SIZE*3)
+                    decorations_list.append(Decoration(x, y, image=castle_back_img)) 
+
+            elif cell in ('M', 'D', 'L', 'R', 'm', 'd', 'l', 'r'):
+                # Uppercase: regular MoonSpike.png, Lowercase: MoonSpikeDeep.png
+                if current_level == 1:
+                    orientation_map = {'M': 'up', 'D': 'down', 'L': 'left', 'R': 'right',
+                                    'm': 'up', 'd': 'down', 'l': 'left', 'r': 'right'}
+                    spike_type = 'deep' if cell.islower() else 'normal'
+                    orientation = orientation_map[cell]
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+                    tile_img = None
+                    if moon_spike_images is not None and spike_type in moon_spike_images:
+                        tile_img = moon_spike_images[spike_type].get(orientation)
+                    tiles_list.append(Tile(new_rect, 'moonspike', image=tile_img, orientation=orientation))
+
+            elif cell == 'r':
+                if current_level == 2:
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE*3)
+                    tiles_list.append(Tile(new_rect, 'moonspike', image=neon_spike_r_img))
+                
+            elif cell == 'l':
+                if current_level == 2:
+                    new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE*3)
+                    tiles_list.append(Tile(new_rect, 'moonspike', image=neon_spike_l_img))
+
+            
             elif cell == '-':
                 # Wide tile (3x width)
                 new_rect = pygame.Rect(x, y, TILE_SIZE*3, TILE_SIZE)
@@ -1923,11 +2056,33 @@ def setup_level(layout, moon_spike_images=None):
                 wide_rock_img = pygame.transform.scale(wide_rock_img, (TILE_SIZE * 3, TILE_SIZE * 2))
                 new_rect = wide_rock_img.get_rect(topleft=(x, y))
                 tiles_list.append(Tile(new_rect, 'normal', image=wide_rock_img))
+            elif cell == 'g':
+                new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+                tiles_list.append(NeonTile(new_rect, 'green', neon_images['green']['active'], neon_images['green']['inactive']))
+            elif cell == 'p':
+                new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+                tiles_list.append(NeonTile(new_rect, 'pink', neon_images['pink']['active'], neon_images['pink']['inactive']))
           
             elif cell == 'T': #moonTree
-                decorations_list.append(Decoration(x, y, tree_img))
+                if current_level == 1:
+                    decorations_list.append(Decoration(x, y, tree_img))
+                if current_level == 2:
+                    tv_count += 1
+
+                    if tv_count == 1:
+                        lines = [
+                                "@Princess Kira: La dee dummm!",
+                                "@Princess Kira: Oh look at me, yeah yeah, I sing good and stuff.",
+                                "@Princess Kira: ....Hey, who're you?",
+                                "@Captain Vio: . . . "
+                            ]
+                    elif tv_count == 2:
+                        lines = ["@Princess Kira: hi "]
+                npcs.append(NPC(x, y, "Jumbotron", lines))
+
 
             elif cell == 'o': #'normal' grey tile, but moonDetail.png
+                new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
                 moon_img = pygame.image.load("moonDetail.png").convert_alpha()
                 moon_img = pygame.transform.scale(moon_img, (TILE_SIZE, TILE_SIZE))
                 tiles_list.append(Tile(new_rect, 'normal', image=moon_img))
@@ -1936,17 +2091,12 @@ def setup_level(layout, moon_spike_images=None):
                 checkpoint_img = pygame.transform.scale(checkpoint_img, (TILE_SIZE*2, TILE_SIZE*2))
                 new_checkpoint = Checkpoint(x, y, checkpoint_img)
                 checkpoints.append(new_checkpoint)
-            elif cell in ('M', 'D', 'L', 'R', 'm', 'd', 'l', 'r'):
-                # Uppercase: regular MoonSpike.png, Lowercase: MoonSpikeDeep.png
-                orientation_map = {'M': 'up', 'D': 'down', 'L': 'left', 'R': 'right',
-                                   'm': 'up', 'd': 'down', 'l': 'left', 'r': 'right'}
-                spike_type = 'deep' if cell.islower() else 'normal'
-                orientation = orientation_map[cell]
-                new_rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
-                tile_img = None
-                if moon_spike_images is not None and spike_type in moon_spike_images:
-                    tile_img = moon_spike_images[spike_type].get(orientation)
-                tiles_list.append(Tile(new_rect, 'moonspike', image=tile_img, orientation=orientation))
+
+            #elif cell == 'W': # Stained Glass Windows
+                #if current_level == 2:
+                   # glass_img = pygame.image.load("neon_glass.png").convert_alpha()
+                   # glass_img = pygame.transform.scale(glass_img, (TILE_SIZE, TILE_SIZE * 3))
+                    #decorations_list.append(Decoration(x, y, glass_img))
 
             elif cell == 'N':
                 # level 1 NPC #"But all he's doing is just causing desert-related incidents.",
@@ -1959,7 +2109,8 @@ def setup_level(layout, moon_spike_images=None):
                     "@Captain Vio: .|.|.|.|.|"
                 ]
                 npcs.append(NPC(x, y, "Moistar", lines))
-
+    if cell != ' ': # If it's NOT a space
+        print(f"DEBUG: Found character '{cell}' at row {row_index}, col {col_index}")
     return tiles_list, checkpoints, decorations_list
 
 
@@ -1988,20 +2139,26 @@ class Ship:
     def start_takeoff(self, next_level):
         self.taking_off = True
         self.target_level = next_level
-        self.active = True
+        self.rumble_timer = 60 
 
     def update(self):
-        if not self.active:
-            return False
-        if self.taking_off:
-            self.rect.y -= self.takeoff_speed
-            if self.rect.y < -200:
-                if not hasattr(self, 'transition_fade'):
-                    self.transition_fade = 0
-                self.transition_fade = min(255, self.transition_fade + 5)
-            if self.transition_fade >= 255:
-                self.state = "SHIP_MEMORY"
-                return True
+        if not self.taking_off: return False
+        if self.rumble_timer > 0:
+                    self.rumble_timer -= 1
+                    # Add small jitter to the ship's position
+                    self.rect.x += random.randint(-2, 2)
+                    return False 
+        self.rect.y -= self.takeoff_speed // 2 
+        self.rect.x += self.takeoff_speed *2
+        if self.rect.y > 400:
+            self.takeoff_speed // 2 
+        if self.rect.y < -300:
+            if not hasattr(self, 'transition_fade'):
+                self.transition_fade = 0
+            self.transition_fade = min(255, self.transition_fade + 5)
+        if self.transition_fade >= 255:
+            self.state = "SHIP_MEMORY"
+            return True
             #if self.rect.bottom < 0:
                 #self.active = False
             
@@ -2016,28 +2173,43 @@ class Ship:
             fade_surf.fill((0, 0, 0))
             fade_surf.set_alpha(self.transition_fade)
             screen.blit(fade_surf, (0, 0))
-        screen.blit(self.image, camera.apply(self.rect))
+        
+        shake_offset = (0, 0)
+        if ship.taking_off and ship.transition_fade < 100:
+            shake_offset = (random.randint(-4, 4), random.randint(-4, 4))
 
+        # Apply the shake to your camera or blit position
+        screen.blit(ship.image, (camera.apply(ship.rect).x + shake_offset[0], 
+                                camera.apply(ship.rect).y + shake_offset[1]))
 
 def load_level(level_number):
-    global current_level, LEVEL_MAP, tiles, checkpoints, decorations_list
+    global current_level, LEVEL_MAP, tiles, checkpoints, decorations_list, font
     global npcs, hazards, boss_triggered, boss_finished, boss_manager
     global boss_state, boss_first_entry, active_dialogue, ship, shadow, camera
-    global moon_spike_images, Vio, LEVEL_START_POINTS
-
+    global moon_spike_images, Vio, LEVEL_START_POINTS, neon_images, active_neon_color, neon_toggle_timer
+    print(f"DEBUG: Starting load_level({level_number})")
     current_level = level_number
+    if level_number == 2:
+        active_neon_color = 'green'
+        LEVEL_MAP = LEVEL2_MAP
     if level_number == 1:
         LEVEL_MAP = LEVEL1_MAP
-    elif level_number == 2:
-        LEVEL_MAP = LEVEL2_MAP
-    else:
-        LEVEL_MAP = LEVEL1_MAP
+    #else:
+        #LEVEL_MAP = LEVEL1_MAP
+
+
+    if 'tiles' in globals(): tiles.clear()
+    if 'checkpoints' in globals(): checkpoints.clear()
+    if 'decorations_list' in globals(): decorations_list.clear()
 
     npcs.clear()
     if shadow is None:
         shadow = Shadow((0, 0))
     else:
         shadow.reset(Vio)
+
+    
+    print("DEBUG: NPCs cleared, resetting Vio")
 
     hazards = [shadow]
     boss_triggered = False
@@ -2047,20 +2219,39 @@ def load_level(level_number):
     boss_first_entry = True
     active_dialogue = None
 
+    #current_fade = ship.transition_fade if ship is not None else 0
     start_pos = LEVEL_START_POINTS.get(level_number, (100, 2724))
     Vio.reset_for_level(start_pos)
 
     level_width = max(len(row) for row in LEVEL_MAP) * TILE_SIZE
     ship_x = min(level_width - TILE_SIZE * 2 - 50, 15000 + 2500)
     ship_y = min(HEIGHT + 120, 760)
-    ship = Ship(ship_x, ship_y)
+    ship_img = pygame.image.load("Allegro(open).png").convert_alpha()
+    ship = Ship(ship_x, ship_y, ship_img)
+    #ship.transition_fade = current_fade
+    #ship.active = True 
 
     if camera is not None:
         camera.offset_x = max(0, Vio.rect.centerx - WIDTH // 2)
         camera.offset_y = max(0, Vio.rect.centery - HEIGHT * 0.65)
+    
+    print("DEBUG: About to call setup_level")
 
     tiles, checkpoints, decorations_list = setup_level(LEVEL_MAP, moon_spike_images)
+    print(f"--- Level {level_number} Loading Report ---")
+    print(f"Total tiles created: {len(tiles)}")
+    
+    print("DEBUG: setup_level FINISHED")
+    if len(tiles) > 0:
+        # Find the very first solid tile to see its coordinates
+        first_tile = tiles[0]
+        print(f"First tile found at: x={first_tile.rect.x}, y={first_tile.rect.y}")
+        print(f"Vio starting at: x={Vio.rect.x}, y={Vio.rect.y}")
+    else:
+        print("CRITICAL ERROR: No tiles were created! Check your LEVEL2_MAP string.")
+
     return tiles, checkpoints, decorations_list
+    #return tiles, checkpoints, decorations_list
 
 
 def draw_moon_spike(surface, rect, orientation='up'):
@@ -2205,7 +2396,16 @@ def handle_player_death(player, hazards, tiles, camera, particles, trail_particl
         trail_particles.clear()
 
 def main():
-    global boss_triggered, boss_manager, Vio, shadow, ship, current_level, moon_spike_images, active_dialogue, hazards
+    global boss_triggered, boss_manager, Vio, shadow, ship, current_level, moon_spike_images, active_dialogue, hazards, LEVEL_MAP
+    
+    LEVEL_MAP = LEVEL1_MAP  # Initialize level map
+    
+
+    if DEBUG_LEVEL_2:
+        tiles, checkpoints, decorations_list = load_level(2)
+        game_state = "LEVEL_START_ANIMATION"
+        ship.rect.y = -500 
+
     # World starfield for the background
     max_world_width = max(len(row) for row in LEVEL_MAP) * TILE_SIZE
     max_world_height = len(LEVEL_MAP) * TILE_SIZE
@@ -2260,6 +2460,7 @@ def main():
     moon_spike_images['deep']['left'] = pygame.transform.rotate(moon_spike_deep, 90)
     moon_spike_images['deep']['right'] = pygame.transform.rotate(moon_spike_deep, -90)
 
+    load_neon_images()
     tiles, checkpoints, decorations_list = load_level(current_level)
 
     # Boss assets - will be loaded when needed
@@ -2308,14 +2509,22 @@ def main():
     intro_dialogue = DialogueBox(font, opening_text, autoplay = True, has_background = False)
 
     z_was_held = False
-
+    talking_npc = None
+    
+    floor_falling = False
+    kira_is_dropping_floor = False
 
     while True:
         global boss_manager, boss_state, boss_first_entry, button_is_glowing
+        interaction_performed = False
         keys = pygame.key.get_pressed()
-        z_currently_held = keys[pygame.K_z] or keys[pygame.K_RETURN] or keys[pygame.K_SPACE] or (joysticks and any(joy.get_button(0) or joy.get_button(1) for joy in joysticks))
+        confirm_keys_held = keys[pygame.K_z] or keys[pygame.K_RETURN] or keys[pygame.K_SPACE]
+        confirm_buttons_held = any(joy.get_button(0) or joy.get_button(1) for joy in joysticks)
+        z_currently_held = confirm_keys_held or confirm_buttons_held
+        
         for event in pygame.event.get():
-            if event.type == pygame.QUIT: return
+            if event.type == pygame.QUIT:
+                return
 
             # Handle controller connection/disconnection
             if event.type == pygame.JOYDEVICEADDED:
@@ -2323,6 +2532,7 @@ def main():
                 joy.init()
                 joysticks.append(joy)
                 print(f"Controller connected: {event.device_index}")
+                continue
             if event.type == pygame.JOYDEVICEREMOVED:
                 removed_id = getattr(event, 'instance_id', None)
                 if removed_id is not None:
@@ -2330,27 +2540,47 @@ def main():
                 else:
                     joysticks[:] = [joy for joy in joysticks if joy.get_id() != event.device_index]
                 print(f"Controller disconnected: {removed_id if removed_id is not None else event.device_index}")
+                continue
 
-            # Jump logic only in playing state
-            # Allow jump input if no dialogue, or if dialogue is passive
-            can_jump = not active_dialogue or (active_dialogue and active_dialogue.is_passive)
-            if game_state == "PLAYING" and can_jump:
+            # Handle input events
+            if game_state == "PLAYING":
+                can_jump = not active_dialogue or (active_dialogue and active_dialogue.is_passive)
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_z: 
+                    if event.key in (pygame.K_z, pygame.K_RETURN, pygame.K_SPACE):
+                        # Try interaction first. If no interaction occurs, allow Z to jump.
+                        for npc in npcs:
+                            if not active_dialogue and npc.check_interaction(Vio.rect, True):
+                                active_dialogue = DialogueBox(font, npc.dialogue_text, speaker_name=npc.name)
+                                talking_npc = npc
+                                npc.talk_cooldown = 30
+                                interaction_performed = True
+                                break
+                        if interaction_performed:
+                            continue
+                    if event.key == pygame.K_z and can_jump:
                         is_running = keys[pygame.K_x] and abs(Vio.vel_x) > WALK_SPEED
                         Vio.jump(is_running)
-                
-                if event.type == pygame.JOYBUTTONDOWN:
-                    if event.button == 0 or event.button == 1: 
-                        is_running = False
-                        for joy in joysticks:
-                            try:
-                                if joy.get_button(2) or joy.get_button(3) and abs(Vio.vel_x) > WALK_SPEED:
-                                    is_running = True
-                                    break
-                            except pygame.error:
-                                continue
-                        Vio.jump(is_running)
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button in (0, 1):
+                        for npc in npcs:
+                            if not active_dialogue and npc.check_interaction(Vio.rect, True):
+                                active_dialogue = DialogueBox(font, npc.dialogue_text, speaker_name=npc.name)
+                                talking_npc = npc
+                                npc.talk_cooldown = 30
+                                interaction_performed = True
+                                break
+                        if interaction_performed:
+                            continue
+                        if can_jump:
+                            is_running = False
+                            for joy in joysticks:
+                                try:
+                                    if (joy.get_button(2) or joy.get_button(3)) and abs(Vio.vel_x) > WALK_SPEED:
+                                        is_running = True
+                                        break
+                                except pygame.error:
+                                    continue
+                            Vio.jump(is_running)
         if game_state == "PLAYING":
             if active_dialogue:
                 
@@ -2362,7 +2592,10 @@ def main():
                         boss_manager.transition_to_falling()
                         
                     active_dialogue = None
-                    npc.talk_cooldown = 30
+                    if talking_npc:
+                        if talking_npc.name.lower() == "jumbotron":
+                            kira_is_dropping_floor = True
+                        talking_npc = None
             if boss_triggered and not boss_finished:
                 # Set the limits (Leave a little padding so Vio doesn't touch the literal edge)
                 min_x = 15000 + 10
@@ -2375,14 +2608,25 @@ def main():
                     Vio.rect.x = max_x
 
             else:
-                if z_currently_held and not z_was_held:
-            
-                    for npc in npcs:
-                        if npc.check_interaction(Vio.rect, keys) and not active_dialogue:
-                            active_dialogue = DialogueBox(font, npc.dialogue_text, speaker_name="Moistar")
-
+                # NPC dialogue is handled directly in the input event loop.
+                pass
+                    
+        if active_dialogue is None and kira_is_dropping_floor:
+            # Trigger the platform drop once after the TV dialogue finishes.
+            floor_falling = True
+            kira_is_dropping_floor = False
+            #Vio.can_move = False
         
-
+        if floor_falling:
+            drop_zone = pygame.Rect(Vio.rect.left - TILE_SIZE, Vio.rect.bottom, Vio.rect.width + TILE_SIZE * 2, TILE_SIZE)
+            for tile in tiles:
+                if hasattr(tile, 'rect') and tile.rect.colliderect(drop_zone):
+                    tile.rect.y += 1415
+            
+            if Vio.rect.y > HEIGHT + 100:
+                #snd
+                floor_falling = False
+                Vio.can_move = True
         # Update based on game state
         if game_state == "INTRO":
             # Skip intro dialogue by holding Shift (for dev testing)
@@ -2391,11 +2635,15 @@ def main():
             if intro_dialogue.finished:
                 game_state = "PLAYING"
         elif game_state == "PLAYING":
-            camera.update(Vio.rect)
+            if ship.taking_off:
+                camera.update(ship.rect)
+            else:
+                camera.update(Vio.rect)
            
             # Only lock controls if dialogue is NOT passive
             cutscene_mode = active_dialogue and not getattr(active_dialogue, 'is_passive', False)
             Vio.update(tiles, trail_particles, cutscene_mode=cutscene_mode)
+            update_neon_toggle()
             
             #if active_dialogue:
                 #Vio.update_animation()
@@ -2426,25 +2674,26 @@ def main():
 
 
             #========LEVEL 1 BOSS=====================================
-            #if ship and not ship.active:
-                    #ship.activate()
-            #if ship and ship.active:
-                #if Vio.rect.colliderect(ship.rect) and not ship.taking_off:
-                    #if z_currently_held and not z_was_held:
-                        #Vio.visible = False 
-                        #Vio.can_move = False 
-                        #ship.start_takeoff(2)
+            if ship and not ship.active:
+                    ship.activate()
+            if ship and ship.active:
+                if Vio.rect.colliderect(ship.rect) and not ship.taking_off:
+                    if z_currently_held and not z_was_held:
+                        Vio.visible = False 
+                        Vio.can_move = False 
+                        
+                        ship.start_takeoff(2)
 
-                #if ship.update():
-                 #   game_state = "MEMORY_TRANSITION" 
-                  #  memory_text = [
-                    #    "Lin: You're playing too fast again, Vio.",
-                    #    "Lin: If you rush the ending... | you'll miss the best part of the song.",
-                    #    "Vio: The best part?",
-                    #    "Lin: The part where we're playing together. | Don't leave me behind, okay?"
-                  #  ]
+                if ship.update():
+                    game_state = "MEMORY_TRANSITION" 
+                    memory_text = [
+                        "@Lin:something",
+                       # "@: ",
+                        #"@: ",
+                        #"@: "
+                    ]
                     
-                  #  active_dialogue= DialogueBox(font, memory_text, autoplay = True, is_passive=False)
+                    active_dialogue= DialogueBox(font, memory_text, autoplay = True, has_background=True, is_passive=False)
                     #if ship.target_level is not None:
                         #load_level(ship.target_level)
             if not boss_triggered and Vio.rect.x > BOSS_ARENA1_START_X and Vio.rect.x <17000:
@@ -2537,12 +2786,17 @@ def main():
 
                     if ship.update():
                         if ship.target_level is not None:
-                            load_level(ship.target_level)
+                            tiles, checkpoints, decorations_list = load_level(ship.target_level)
 
-
+            
 
             #DRAW===================================
             screen.fill((124, 57, 103))
+
+
+            for decoration in decorations_list:
+                decoration.draw(screen, camera) 
+
             for star in stars:
                 star.update()
                 star.draw(screen, camera)
@@ -2573,6 +2827,8 @@ def main():
                     visual_rect.width = max(4, TILE_SIZE // 5)
                     visual_rect.centerx = tile.rect.centerx
                     pygame.draw.rect(screen, color, camera.apply(visual_rect))
+                elif tile.type == 'neon':
+                    tile.draw(screen, camera)
                 elif tile.type == 'moonspike' or tile.type == 'shockwave':
                     if tile.type == 'shockwave' and hasattr(tile, 'current_image'):
                         screen.blit(tile.current_image, camera.apply(tile.rect))
@@ -2584,8 +2840,7 @@ def main():
                 else:
                     color = (150, 150, 150)  # Gray fallback
                     pygame.draw.rect(screen, color, camera.apply(tile.rect))
-                for decoration in decorations_list:
-                    decoration.draw(screen, camera) 
+
         
         # Fade to black and restart (only in playing state)
         if game_state == "PLAYING" and fading:
@@ -2640,20 +2895,58 @@ def main():
             fade_surf.set_alpha(boss_manager.memory_fade)
             screen.blit(fade_surf, (0, 0))
             
-        #    DRAW  SHIP===
+    
+        # If we are in the memory state, keep the screen black and show text
+        if game_state == "MEMORY_TRANSITION":
+            if active_dialogue:
+                active_dialogue.update(keys)
+                screen.fill((0, 0, 0))
+            if active_dialogue is None or active_dialogue.finished:
+                active_dialogue = None
+                tiles, checkpoints, decorations_list = load_level(2)
+                game_state = "LEVEL_START_ANIMATION"
+                ship.taking_off = False 
+                ship.rect.y = -500  
+                ship.rect.x = 200
+                ship.transition_fade = 255
+                #Vio.rect.topleft = (-1000, -1000) 
+                # Reset Vio's visibility for the new level
+                #Vio.visible = True
+                #Vio.can_move = True
+                # Set a new starting position for Level 2 balcony
+                #Vio.rect.topleft = (100, 300) 
+                #active_dialogue.draw(screen)
+            # Once the dialogue is finished, transition to level 2
+            #if active_dialogue and active_dialogue.finished:
+                #load_level(2)
+                #game_state = "PLAYING"
+                #active_dialogue = None
+        BALCONY_Y = 500
+
+        if game_state == "LEVEL_START_ANIMATION":
+            # Fade the black out
+
+            ship.transition_fade = max(0, ship.transition_fade - 5)
+            
+            ship.rect.y += ship.takeoff_speed
+            ship.rect.x += ship.takeoff_speed // 2 # Reverse the diagonal drift
+        
+            camera.update(ship.rect)
+        
+            if ship.rect.y >= BALCONY_Y:
+                ship.rect.y = BALCONY_Y
+                game_state = "PLAYING"
+                Vio.visible = True
+                Vio.can_move = True
+                Vio.rect.center = ship.rect.center
+            print(f"Ship Y: {ship.rect.y}, Fade: {ship.transition_fade}")
+            #    DRAW  SHIP===
         if ship.active and ship.transition_fade > 0:
             fade_surf = pygame.Surface((WIDTH, HEIGHT))
             fade_surf.fill((0, 0, 0))
             fade_surf.set_alpha(ship.transition_fade)
             screen.blit(fade_surf, (0, 0))
 
-        # If we are in the memory state, keep the screen black and show text
-        if game_state == "MEMORY_TRANSITION":
-            screen.fill((0, 0, 0))
-            # Draw your Lin memory text here!
-            # Once the player presses Z to skip or timer ends:
-            # load_level(2)
-            # game_state = "PLAYING"
 
         if active_dialogue:
             if not active_dialogue.is_passive:
@@ -2673,6 +2966,7 @@ def main():
                 offset = random.randint(-20, 20)
                 screen.blit(screen_copy, (offset, i), (0, i, WIDTH, 4))
         
+        z_was_held = z_currently_held
         pygame.display.flip()
         clock.tick(60)
         pygame.display.set_caption(f" X: {Vio.rect.x} Y: {Vio.rect.y}")
@@ -2748,75 +3042,83 @@ LEVEL1_MAP = [
 ]
 
 LEVEL2_MAP = [
-    '........................................................................................................................................................................................................................................G..GG...G...G...G...G...G...G...G...G...G..G..G...G...G...G...G...GG...G...G...G..G...GG...',
-    '.................................................................................................................................................................................................................................................................................................................................',
-    '.................................................................................................................................................................................................................................................................................................................................',
-    '.......................................................................................................................................................................................................................................G...GG...G...G...G...G...G...G...G...G...G...G..G...G...G...G...G...G...G...G...G...G...G..G...G...G...G..G...G...G...G..G...G...G...G..G...G...G...G..G...G...G...G.',
-    '....................................................................................................................................................................................................................................................................................................................................................................$',
-    '...........................................................................................................................................................................................................................................G.....................................................................................',
-    '.......................................................................................................................................................................................................................................G...G.........................................................................................$....................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G........GG...dddddddddddddddddddddddddd#############################################ddddd.........$$..............$.$...................................',
-    '...............................................................................................................................................................................................................................................r..........................d######..G...G...G...G..G..$G...G...G...G..$$.........................................................................................',
-    '.......................................................................................................................................................................................................................................G...G...$...........................d#####..G...G...G...G..G..$G...G...G...G..$$...................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.........................................d####....................................$$................................................................................',
-    '...............................................................................................................................................................................................................................................$.............................d###....................................................................................................................',
-    '.......................................................................................................................................................................................................................................G...G...#..............................d##........................................................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............#..........#########.......................................................................................................................................................',
-    '...............................................................................................................................................................................................................................................$..........#########.......................................................................................................................................................',
-    '.......................................................................................................................................................................................................................................G...G..............lG...G..........................................................................................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G.......................lG...G....MMmmmmmmMGGGGGGGGGGGGGGGGGGGGGGGGGG..G..G..G.............................................................................................................',
-    '...............................................................................................................................................................................................................................................$..........lG...G....G...G...G.G...#....#GGGGGGoGGGGGGG..................................................................................................................',
-    '.......................................................................................................................................................................................................................................G...G..............lG...G..................l....#GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G......,,,..............lG...G..................lG...#GGGGGGGGGGGGGG....................................................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G............$..........lG...G....G...G...G.G...l....#GGGGGGGGGGGGGG....................................................................................................................',
-    '.......................................................................................................................................................................................................................................G...G..............lG...G...r..............l....#GGGGGGGGGGGGGG....................................................................................................................',
-    '......................................................................................................................................................................................G...G...G...G...G...G...G...G...G...G...G...G...F........$..........lG...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
-    '.............................................................................................................................................................................G...#####..............................................G.....................lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '.............................................................................................................................................................................G...#####G...G...G...G...G...G...G...G...G...G...G...G.G...G..G..............lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '.............................................................................................................................................................................G...#####.........................................................r..........lG...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
-    '.............................................................................................................................................................................G...#####.........................................................#r.........$G...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '.............................................................................................................................................................................G...#####.........................................................##r.........G...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
-    '...............................................................mm............................................................................................................G...#G...ddddddddddddddddddddddddddddddddddddddddd###################r........G...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '............................................VVVV..............L##R...........................................................................................................G...#............VVV..............................D###################r......lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#..............................................Ddd#####Go#####G...r......lG...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#G..................................................L#########G...r......lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#....................................................l########G...r......lG...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#.....................................................l#######G...r......$G...G...r..............lG...rGGGGGGGGGGGGGG....................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#G.....................................................#######G...r.......G...G...r..............l....rGGGGGGGGGGGGGG....................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#.......................................................DddddDG...r.......G...G...r..............lG...r..................................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#.............................................................G...r......lG...G...r..............l....r..................................................................................................................................',
-    '..............................................................L##R...........................................................................................................G...#G............................................................G...$......lG...G...r..............l....r..............GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG',
-    '..............................................................L##R...........................................................................................................G...#........................................................................lG...G...r..............lG...r',
-    '..............................................................L##R...........................................................................................................G...#.......................l###########.....................................lG...G...r..............l....r',
-    '..............................................................L##R...........................................................................................................G...#G......................l##Go########................S............#......lG...G...r..............l....r',
-    '..............................................................L##R...........................................................................................................G...#...........#######.....l#############................S..................lG...G...r..............lG...r',
-    '...........................................................U..L##R.......................................................G...G...G...G...G...G...G...G...G...G...G...G...G...G...#..........Sl#####r.....l###Go#########..................................lG...G...r..............l....r',
-    '..........................................MGGGGGGGG.......GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......G...G...G...G...G...G...G...G...G...G...G...G...G...G...G...........l#####r.....l###############....mmmmmmmm.....................lG...G...r..............l....r',
-    '..........................................$$$....................................................................................................................................#...r.......l#####r.....l#####################Go####Go######Go####################r..............lG...r.',
-    '...............................lmr........$-o.....................---............................................................................................................#...r.......l#####r.....l#########################################################r..............l....r..',
-    '...............................l#r........$$$....................................................................................................................................#...r......Sl#####r.....l#########################################################r..............l....r..',
-    '...............................l#r........$$$...................M.......................................................#########ddddddddddddddddddddddddddddddddddddddddddddddddddddd.......l#####r.....l#########################################################r..............lG...r.',
-    '...............................l#r......MM$$$..................LR........................................................G...G..#............................................................l#####r.....l#########################################################r..............l....r...',
-    '...............................l#r......$$$.....................LR..............................................................#............................................................l#####r.....l#########################################################r..............l....r.',
-    '...............................l#r......$$$......................LR---................---.......................................#............................................................l#####r.....l#########################################################r..............lG...r....',
-    '...............................l#r......$$$......................LRG...G...G...G...G...Go..G...G...G...G...G...G...G.G...G...G..#............................................................l#####r.....l#########################################################r..............l....r...' ,
-    '...............................ldr......$$$.....................LR..............................................................#............................................................l#####r.....l#########################################################r..............l....r..',
-    '......................###...............$$$...........$$$$$$$...LR........................................-..--.................#................................................#####.......l#####r.....l#########################################################r..............lG...r...',
-    '......................-#o...............$$$U.........GGGGGGGGGGGGGGGGGGGGGGGG...#####GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..G...G...#................................................l###r.......l#####r.....l#########################################################r..............l####r...',
-    '..NNNNN...............---..###.............MM$$$$$$$$$$......o.......................#-o##.....................x.....................#.....................................####.......l###r.......l###r.......l#####r.....l##########################################################mmmmmmmmmmmmmm######..',
-    '.................$$$$$$$$.............$$$G..G...$$..............-.....-..-......#####...........................................#.....................C...............l##r.......l###r.......l###r.......l#####r.....l##############################################################################.',
-    '.........N.......$$$$$..........M.......G.......................................ddddd...........................................#..................S..................l##r.......l###r.......l###r.......l#####r.....l##############################################################################',
-    '...............................L#R..........................................................dddddd................................................###.U...#####,,,,,,,l##r.......l###r.......l###r.......l#####r.....l#########################################################################################################################################################################..',
-    '##Go#########....#########MMMMG##oMMMM$$$.G..G..$$..................................................................S.............................l###...#####r.......l##r.......l###r.......l#####r.....l#########################################################################################################################################################################...........',
-    '#####Go######MMMM#########G.G..G..G..G...G..G...$$................................................................................................l###########r.......l##r.......l###r.......#######.....l#########################################################################################################################################################################..................................................',
-    '#Go##########Go###########..G...G...G...G...G.....................................................................................................l############mmmmmmm####mmmmmmm#####mmmmmmm#######mmmmm##########################################################################################################################################################################.........................................',
-    '######Go##################..G...G...G...G...G......U..............................S..................S............................................l################################################################################################################################################################################################################################',
-    'G...G...G...G...G...G...G...G...G...G...G...G...GGGGGGGGGGGoGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..#G...G...G...G...G...G...G...G...G...G.#######################################################################################################################################################################################################################',
-    'G...G...G...G...G..G...G...G...GW..G...G...G...G.....................................................................#',
-    '..............................W.................G...G...G...G...G...G...G..G...G...G...G...G...G...G...G...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...GG...G...G...G...G...G...G........................................#',
-    'W..............................WW....................................................................................#',
+    '....................................................................................................................................................................................................',
+    '....................................................................................................................................................................................................',
+    '.........................................................................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2.........................................................................................................',
+    '....................................................................................................................................................................................................',
+    '....................................................................................................................................................................................................',
+    '.........................................................................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2.........................................................................................................',
+    '....................................................................................................................................................................................................',
+    '....................................................................................................................................................................................................',
+    '.........................................................................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2.........................................................................................................',
+    '....................................................................................................................................................................................................',
+    '....................p................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '....................p....................................................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '....................p................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '............g.......p....................................................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '............g........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '............g............................................................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '............g........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...........s.................s.................s.........................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2.............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...........................................................................................................T.............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '.........#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.ggg.....gggg.........ppppppppp#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#....................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '.........$.......$.......$.......$.......$.......$.................................2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..2..............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '.......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '.........$.......$.......$.......$.......$.......$.................................2..2..2..2..2..2..2.2r2.2..2.l2..2..2..2..2..2.........................................................................................................................................................................................................................................................................................................................................................................................................',
+    '....gggggggggggggggggggggggggggggggggggggggggggggg......................................................r...............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2..2..2..2.l....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2..2..2..2.l....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r.......l....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '###################################################################################2..2..2..2..2..2..2..2..2..2..###################################################################3...........#####################################################.........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r.......l.....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2.2..2..2....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r.......l.....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2..2..2..2.....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '....................gggggggggggggggggggggggggggggggggggppppppppppppppppppppppppppppppp..................r.......l.......................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2..2..2..2....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r.......l.....................................................................................................................................................................................................................................................................................................................................................................................................',
+    'ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg2..2..2..2..2..2..2..2..2..2...gggggggggggggggggggggggggggggggggggggggggggg....................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r.......l.....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2..2..2..2.....................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................r.......l...............................................................p.........................................#######################............................................................................................................................................................................................................................................................................................',
+    '...................................................................................2..2..2..2..2..2..2..2..2..2.................................................................p.......g.................g......p...................................................................................................................................................................................................................................................................................................',
+    'GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG.......................................................................p.......g........p........g......p.............................................................................................................................................................................................................................................................................................................................................................................................................',
+    '........................................................................................................2..2..2.................................................................p.......g........p........g......p..............................................................................................................................................................................',
+    '................................................................................................................................................................................p.......g........p........g......p..............................................................................................................................................................................',
+    '........................................................................................................2.2c..2.........................................................................g........p........g..................................................................................................................................................................................',
+    '..........................................................................................................2......................................................................................p.........................................................................................................................................................................................',
+    '........................................................................................................2#################################################################...................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+    '............................................................................................................................................................................................................................................................................................................................................................................................',
+
 
 ]
 
-LEVEL_MAP = LEVEL1_MAP
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__": main()
