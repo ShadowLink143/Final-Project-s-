@@ -26,9 +26,9 @@ DASH_TIME = 15
 DASH_COOLDOWN = 20
 
 DEBUG_LEVEL_2 = False
-DEBUG_ENABLED = False  # debug warping 
+DEBUG_ENABLED = True  # debug warping 
 DEBUG_SHIP_SPAWN = False
-canSkip = False
+canSkip = True
 
 active_dialogue=None
 boss_triggered = False
@@ -129,8 +129,7 @@ CREDITS_TEXT = [
     "                            ",
     "                            ",
     "                            ",
-    "StitchedMask",
-    #"STORY: YOUR NAME",
+    "shadowcat",
     "                            ",
     "                            ",
     "                            ",
@@ -139,8 +138,8 @@ CREDITS_TEXT = [
     "                            ",
     "                            ",
     "                            ",
-    "StitchedMask",
-    #"STORY: YOUR NAME",
+    #"StitchedMask",
+    "shadowcat                           ",
     "                            ",
     "                            ",
     "                            ",
@@ -149,7 +148,7 @@ CREDITS_TEXT = [
     "                            ",
     "                            ",
     "                            ",
-    "StitchedMask",
+    "shadowcat",
     "goober-404",
     "DeltaDunked",
     "                            ",
@@ -163,7 +162,7 @@ CREDITS_TEXT = [
     "                            ",
     "                            ",
     "                            ",
-    "StitchedMask",
+    "shadowcat",
     "goober-404",
     "DeltaDunked",
     "",
@@ -3592,7 +3591,7 @@ class NPC:
             screen.blit(self.tv_img, tv_pos)
            
             self.portrait_timer += 1
-            if self.portrait_timer >= 90: 
+            if self.portrait_timer >= 40: 
                 self.portrait_timer = 0
                 self.current_portrait = 1 - self.current_portrait
             current_portrait = self.kira_portrait1 if self.current_portrait == 0 else self.kira_portrait2
