@@ -5,6 +5,7 @@ Mouikkai is mostly complete (perhaps a few finishing touches first)...for now. I
 For now, it's a py file, so you'll need pygame installed. I plan to add another version soon which won't require that though.
 
 Mouikkai keyboard controls: z = jump/confirm. x = run. shift = dash. arrow keys = move around.
+
 Mouikkai controller controls. A/B = jump/confirm. X/Y = run. L/R = dash. joystick/d-pad = move around.
 
 
