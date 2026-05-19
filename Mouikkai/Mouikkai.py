@@ -1742,7 +1742,7 @@ class Player:
         if dpad_x != 0:
             controller_x = dpad_x
         if dpad_y != 0:
-            controller_y = -dpad_y
+            controller_y = dpad_y
 
         def snap_axis(x, y, deadzone=0.3):
             x = x if abs(x) > deadzone else 0
@@ -5140,35 +5140,35 @@ def main():
                             frame_shift = 15000 // max(1, final_level_autoscroll_speed)
                             final_level_frame_count += frame_shift
                             camera.offset_x = max(0, Vio.rect.centerx - WIDTH // 2)
-                        if active_dialogue and active_dialogue.is_choice:
-                            # Check if the text is done and they are confirming a choice
-                            if active_dialogue.char_index >= len(active_dialogue.text_list[active_dialogue.current_sentence]):
-                                if active_dialogue.selection == 0: # YES
-                                    Vio.has_knife = True
-                                    npcs = [n for n in npcs if n.name != "Knife"] 
-                                    
-                                    # Trigger the reaction
-                                    active_dialogue = DialogueBox(font, [
-                                        "@Captain Vio: . . . !",
-                                        "I just heard someone's voice.| I have not heard it before.\n(I...don't know what to do...What if it can help?)",
-                                        "@???:Yeah, right. No one else knows. No one can help. \nThey will just hinder our mission. \nWho knows what they will do?",
-                                        "@Captain Vio:(Maybe...it's right. Who knows what that voice was? \nMaybe I should just....forget about it.)",
-                                        #"But a knife's a knife."
-                                    ], speaker_name="Captain Vio")
-                                else: # NO
-                                    active_dialogue = None 
-                                continue # Skip the rest of the key logic
-                        for npc in npcs:
-                            if not active_dialogue and npc.check_interaction(Vio.rect, True):
-                                active_dialogue = DialogueBox(font, npc.dialogue_text, 
-                                                            speaker_name=npc.name, 
-                                                            is_choice=npc.is_item)
-                                npc.talk_cooldown = 30
-                                talking_npc = npc
-                                interaction_performed = True
-                                break    
-                        if interaction_performed:
-                            continue
+                    if active_dialogue and active_dialogue.is_choice:
+                        # Check if the text is done and they are confirming a choice
+                        if active_dialogue.char_index >= len(active_dialogue.text_list[active_dialogue.current_sentence]):
+                            if active_dialogue.selection == 0: # YES
+                                Vio.has_knife = True
+                                npcs = [n for n in npcs if n.name != "Knife"] 
+                                
+                                # Trigger the reaction
+                                active_dialogue = DialogueBox(font, [
+                                    "@Captain Vio: . . . !",
+                                    "I just heard someone's voice.| I have not heard it before.\n(I...don't know what to do...What if it can help?)",
+                                    "@???:Yeah, right. No one else knows. No one can help. \nThey will just hinder our mission. \nWho knows what they will do?",
+                                    "@Captain Vio:(Maybe...it's right. Who knows what that voice was? \nMaybe I should just....forget about it.)",
+                                    #"But a knife's a knife."
+                                ], speaker_name="Captain Vio")
+                            else: # NO
+                                active_dialogue = None 
+                            continue # Skip the rest of the key logic
+                    for npc in npcs:
+                        if not active_dialogue and npc.check_interaction(Vio.rect, True):
+                            active_dialogue = DialogueBox(font, npc.dialogue_text, 
+                                                        speaker_name=npc.name, 
+                                                        is_choice=npc.is_item)
+                            npc.talk_cooldown = 30
+                            talking_npc = npc
+                            interaction_performed = True
+                            break    
+                    if interaction_performed:
+                        continue
 
 
                     # Pause with P key
