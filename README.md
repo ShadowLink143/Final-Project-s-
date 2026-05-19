@@ -9,7 +9,7 @@ Mouikkai keyboard controls: z = jump/confirm. x = run. shift = dash. arrow keys 
 Mouikkai controller controls. A/B = jump/confirm. X/Y = run. L/R = dash. joystick/d-pad = move around.
 
 Wall jump by pressing 'jump' when pressing up against a wall while in air (in a jump) or quickly turning around and pressing jump when clinging to a wall.
-
+=======================================================
 
 
 And there's also the Mecha Flowey Fight (Demo).py as well.
