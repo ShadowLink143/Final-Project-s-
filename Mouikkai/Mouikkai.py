@@ -1742,7 +1742,7 @@ class Player:
         if dpad_x != 0:
             controller_x = dpad_x
         if dpad_y != 0:
-            controller_y = dpad_y
+            controller_y = -dpad_y
 
         def snap_axis(x, y, deadzone=0.3):
             x = x if abs(x) > deadzone else 0
