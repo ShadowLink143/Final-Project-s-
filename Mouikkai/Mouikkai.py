@@ -6455,10 +6455,12 @@ def main():
         
         z_was_held = z_currently_held
         pygame.display.flip()
-        if Vio is not None:
-            pygame.display.set_caption(f" X: {Vio.rect.x} Y: {Vio.rect.y} game_state: {game_state} current_level: {current_level} camera_x: {camera.offset_x} camera_y: {camera.offset_y}")
-        else:
-            pygame.display.set_caption(f"game_state: {game_state}")
+        pygame.display.set_caption("Mouikkai")
+        #if Vio is not None:
+
+           # pygame.display.set_caption(f" X: {Vio.rect.x} Y: {Vio.rect.y} game_state: {game_state} current_level: {current_level} camera_x: {camera.offset_x} camera_y: {camera.offset_y}")
+        #else:
+           # pygame.display.set_caption(f"game_state: {game_state}")
 LEVEL1_MAP = [
     '........................................................................................................................................................................................................................................G..GG...G...G...G...G...G...G...G...G...G..G..G...G...G...G...G...GG...G...G...G..G...GG...',
     '.................................................................................................................................................................................................................................................................................................................................',
